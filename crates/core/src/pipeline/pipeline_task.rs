@@ -162,7 +162,7 @@ where
         // Adjust output senders to match rhs input senders
         self.output_senders = Vec::new();
         self.output_receivers = Vec::new();
-        println!("rhs.slots: {:?}", rhs.slots);
+
         for _ in 0..rhs.slots {
             let (output_s, output_r) = crossbeam_channel::unbounded();
             self.output_senders.push(output_s);

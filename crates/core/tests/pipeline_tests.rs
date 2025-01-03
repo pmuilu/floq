@@ -1,13 +1,13 @@
-use semasense::engine::{PipelineTask, PipelineComponent, ComponentContext};
-use semasense::test_utils::{
+use floq::pipeline::{PipelineTask, PipelineComponent, ComponentContext};
+use floq::test_utils::{
     NumberSource, NumberDoubler, NumberCollector, 
     StringSource, StringCollector, DelayedStringSource
 };
-use semasense::slots::round_robin_splitter::RoundRobinSplitter;
-use semasense::functions::filter::Filter;
-use semasense::functions::map::Map;
-use semasense::functions::reduce::Reduce;
-use semasense::functions::window::Window;
+use floq::slots::round_robin_splitter::RoundRobinSplitter;
+use floq::functions::filter::Filter;
+use floq::functions::map::Map;
+use floq::functions::reduce::Reduce;
+use floq::functions::window::Window;
 use tracing::debug;
 use std::time::Duration;
 use tokio::time::sleep;

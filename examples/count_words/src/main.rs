@@ -57,7 +57,7 @@ async fn main() {
 
     let access_token = std::env::var("MASTODON_ACCESS_TOKEN").expect("MASTODON_ACCESS_TOKEN not set");
     
-    // We process this pipeline with 4 threads
+    // We process this pipeline with 4 slots (each slot corresponds to a thread in a task i.e. 3 tasks using 4 slots is 3*4 threads in total)
     let slots = 4;
     
     // Let's create Mastodon and Bluesky sources
