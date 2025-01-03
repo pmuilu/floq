@@ -49,7 +49,7 @@ impl PipelineComponent for HashMapPrinterSink {
 }
 
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]    // Let's start with 4 threads
+#[tokio::main(flavor = "multi_thread", worker_threads = 20)]   
 async fn main() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
