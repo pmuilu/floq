@@ -1,6 +1,6 @@
 use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::marker::PhantomData;
 use tracing::{debug, error};
 
@@ -41,15 +41,24 @@ impl<T> Window<T> {
         }
     }
 
-    fn should_trigger(&self, buffer_len: usize, last_trigger: &Instant) -> bool {
+    fn should_trigger(&self, buffer_len: usize, last_trigger_time: u64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
         match self.condition {
             WindowCondition::Count(count) => buffer_len >= count,
-            WindowCondition::Time(duration) => last_trigger.elapsed() >= duration,
-            WindowCondition::Sliding { slide_interval, .. } => last_trigger.elapsed() >= slide_interval,
+            WindowCondition::Time(duration) => {
+                now >= last_trigger_time + duration.as_millis() as u64
+            },
+            WindowCondition::Sliding { slide_interval, .. } => {
+                now >= last_trigger_time + slide_interval.as_millis() as u64
+            }
         }
     }
 
-    fn get_window_items(&self, now: Instant, buffer: &mut Vec<(T, Instant)>) -> Vec<T> 
+    fn get_window_items(&self, now: u64, buffer: &mut Vec<(T, u64)>) -> Vec<T> 
     where T: Clone 
     {
         match self.condition {
@@ -61,7 +70,7 @@ impl<T> Window<T> {
             },
             WindowCondition::Sliding { window_size, .. } => {
                 // Remove items outside the window
-                let cutoff = now - window_size;
+                let cutoff = now - window_size.as_millis() as u64;
                 buffer.retain(|(_, timestamp)| *timestamp >= cutoff);
                 
                 // Return clones of all items in the window
@@ -82,15 +91,22 @@ impl<T: Send + Sync + Clone + 'static> PipelineComponent for Window<T> {
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("Window starting");
         
-        let mut buffer: Vec<(T, Instant)> = Vec::new();
-        let mut last_trigger = Instant::now();
+        let mut buffer: Vec<(T, u64)> = Vec::new();
+        let mut last_trigger = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
         
-        while let Ok(item) = input.recv() {
-            let now = Instant::now();
+        while let Ok(msg) = input.recv() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
             
-            buffer.push((item, now));
+            // Use the message's event timestamp
+            buffer.push((msg, now));
             
-            if self.should_trigger(buffer.len(), &last_trigger) {
+            if self.should_trigger(buffer.len(), last_trigger) {
                 let items_to_send = self.get_window_items(now, &mut buffer);
                 if !items_to_send.is_empty() {
                     if let Err(e) = output.send(items_to_send) {
