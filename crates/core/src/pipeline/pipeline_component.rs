@@ -1,4 +1,4 @@
-use crossbeam_channel::{Sender, Receiver};
+use super::channel::{Sender, Receiver};
 use std::sync::Arc;
 use super::component_context::ComponentContext;
 

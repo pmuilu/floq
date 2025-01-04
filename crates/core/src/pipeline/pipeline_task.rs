@@ -1,4 +1,4 @@
-use crossbeam_channel::{Sender, Receiver};
+use super::channel::{Sender, Receiver};
 use std::ops::BitOr;
 use tokio::task::JoinHandle;
 use tracing::{debug, error};
@@ -55,7 +55,7 @@ impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTas
             let context = Arc::clone(&context);
             
             let task = tokio::spawn(async move {
-                let (null_sender, _) = crossbeam_channel::unbounded();
+                let (null_sender, _) = crate::pipeline::channel::channel();
                 
                 debug!("Running slot component {}", index);
                 component.run(input_receiver, null_sender, context).await;
@@ -82,8 +82,8 @@ impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTas
 
 impl<T: PipelineComponent> PipelineTask<T> {
     pub fn new(component: T) -> Self {
-        let (input_sender, input_receiver) = crossbeam_channel::unbounded();
-        let (output_sender, output_receiver) = crossbeam_channel::unbounded();
+        let (input_sender, input_receiver) = crate::pipeline::channel::channel();
+        let (output_sender, output_receiver) = crate::pipeline::channel::channel();
         
         PipelineTask {
             component: Arc::new(component),
@@ -106,8 +106,8 @@ impl<T: PipelineComponent> PipelineTask<T> {
         
         // Create connected channel pairs for each slot
         for _ in 0..slots {
-            let (input_s, input_r) = crossbeam_channel::unbounded();
-            let (output_s, output_r) = crossbeam_channel::unbounded();
+            let (input_s, input_r) = crate::pipeline::channel::channel();
+            let (output_s, output_r) = crate::pipeline::channel::channel();
             input_senders.push(input_s);
             input_receivers.push(input_r);
             output_senders.push(output_s);
@@ -164,7 +164,7 @@ where
         self.output_receivers = Vec::new();
 
         for _ in 0..rhs.slots {
-            let (output_s, output_r) = crossbeam_channel::unbounded();
+            let (output_s, output_r) = crate::pipeline::channel::channel();
             self.output_senders.push(output_s);
             self.output_receivers.push(output_r);
         }

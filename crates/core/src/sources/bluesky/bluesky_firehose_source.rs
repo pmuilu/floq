@@ -1,7 +1,7 @@
 use crate::pipeline::{PipelineComponent, ComponentContext};
 use futures::stream::StreamExt;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use crossbeam_channel::{Sender, Receiver};
+use crate::pipeline::channel::{Sender, Receiver};
 use tracing::{info, debug, error};
 use crate::sources::bluesky::firehose_message::FirehoseMessage;
 use std::sync::Arc;

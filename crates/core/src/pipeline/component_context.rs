@@ -1,4 +1,4 @@
-use crossbeam_channel::{Sender, Receiver};
+use super::channel::{Sender, Receiver};
 use super::pipeline_component::PipelineComponent;
 
 pub struct ComponentContext<T: PipelineComponent> {

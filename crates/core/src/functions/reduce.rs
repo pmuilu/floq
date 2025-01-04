@@ -1,5 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
-use crossbeam_channel::{Receiver, Sender};
+use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 use tracing::{debug, error};

@@ -7,11 +7,11 @@ use floq::{
         Map,
     },  
     transformers::{GeminiEmbeddings},
+    pipeline::channel::{Sender, Receiver},
 };
 use regex::Regex;
 use once_cell::sync::Lazy;
 use std::{time::Duration};
-use crossbeam_channel::{Sender, Receiver};
 use std::sync::Arc;
 use tracing::{info, debug};
 

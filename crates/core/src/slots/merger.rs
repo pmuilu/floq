@@ -1,5 +1,5 @@
 use crate::pipeline::{PipelineComponent, ComponentContext};
-use crossbeam_channel::{Receiver, Sender};
+use crate::pipeline::channel::{Receiver, Sender};
 use std::marker::PhantomData;
 use tracing::{debug, error};
 use std::sync::Arc;

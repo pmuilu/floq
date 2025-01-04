@@ -1,6 +1,6 @@
 use serde_cbor::Value;
 use std::collections::BTreeMap;
-use crossbeam_channel::Sender;
+use crate::pipeline::channel::Sender;
 use tracing::{debug, error};
 use futures::stream::StreamExt;
 use rs_car::CarReader;

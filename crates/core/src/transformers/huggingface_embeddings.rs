@@ -1,5 +1,5 @@
 use crate::pipeline::{PipelineComponent, ComponentContext};
-use crossbeam_channel::{Receiver, Sender};
+use crate::pipeline::channel::{Receiver, Sender};
 use tracing::{debug, error};
 use serde_json::{json, Value};
 use std::sync::Arc;

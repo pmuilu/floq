@@ -13,9 +13,9 @@ use floq::{
         Window,
         Reduce,
     },  
+    pipeline::channel::{Sender, Receiver},
 };
 use std::{collections::HashMap, time::Duration};
-use crossbeam_channel::{Sender, Receiver};
 use std::sync::Arc;
 use tracing::{info, debug};
 

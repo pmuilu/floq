@@ -1,5 +1,5 @@
 use crate::pipeline::{PipelineComponent, ComponentContext};
-use crossbeam_channel::{Sender, Receiver};
+use crate::pipeline::channel::{Sender, Receiver};
 use std::sync::Arc;
 use tokio_tungstenite::connect_async;
 use futures_util::StreamExt;
