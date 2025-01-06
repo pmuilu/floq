@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 use tracing::{debug, error};
 use serde_json::{json, Value};
@@ -24,7 +24,8 @@ impl PipelineComponent for GeminiEmbeddings {
 
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("GeminiEmbeddings starting");
-        while let Ok(texts) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let texts = msg.payload.clone();
             debug!("Processing {} texts for embeddings", texts.len());
             
             // Create individual requests for each text
@@ -44,7 +45,7 @@ impl PipelineComponent for GeminiEmbeddings {
 
             match self.get_embeddings(body).await {
                 Ok(embeddings) => {
-                    if let Err(e) = output.send(embeddings) {
+                    if let Err(e) = output.send(Message::with_new_payload(msg, embeddings)) {
                         error!("Failed to send embeddings: {:?}", e);
                         break;
                     }

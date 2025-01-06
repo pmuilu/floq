@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::{Receiver, Sender};
 use std::sync::Arc;
 use std::marker::PhantomData;
@@ -31,8 +31,8 @@ where
 
 impl<I, O> PipelineComponent for Map<I, O> 
 where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
 {
     type Input = I;
     type Output = O;
@@ -44,11 +44,11 @@ where
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("Map starting");
         
-        while let Ok(item) = input.recv() {
+        while let Ok(msg) = input.recv() {
             debug!("Map received item");
-            let transformed = (self.transform)(item);
+            let transformed = (self.transform)(msg.payload.clone());
             
-            if let Err(e) = output.send(transformed) {
+            if let Err(e) = output.send(msg.with_new_payload(transformed)) {
                 error!("Failed to send transformed item: {:?}", e);
                 break;
             }

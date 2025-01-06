@@ -1,5 +1,5 @@
 use floq::{
-    pipeline::{PipelineTask, PipelineComponent, ComponentContext},
+    pipeline::{PipelineTask, PipelineComponent, ComponentContext, Message},
 
     sources::{
         BlueskyFirehoseSource,
@@ -36,9 +36,9 @@ impl PipelineComponent for HashMapPrinterSink {
 
     async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _task: Arc<ComponentContext<Self>>) {
         debug!("HashMapPrinterSink starting");
-        while let Ok(word_counts) = input.recv() {
+        while let Ok(msg) = input.recv() {
             info!("Word counts in last window:");
-            for (word, count) in word_counts.iter() {
+            for (word, count) in msg.payload.iter() {
                 if *count > 20 {  // Only show words that appear more than 20 times
                     info!("  '{}': {} times", word, count);
                 }

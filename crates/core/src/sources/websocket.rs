@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Sender, Receiver};
 use std::sync::Arc;
 use tokio_tungstenite::connect_async;
@@ -53,7 +53,7 @@ impl PipelineComponent for WebSocketSource {
             match message {
                 Ok(msg) => {
                     if let Ok(text) = msg.to_text() {
-                        if let Err(e) = output.send(text.to_string()) {
+                        if let Err(e) = output.send(Message::new(text.to_string())) {
                             error!("Failed to send message to output: {}", e);
                             break;
                         }

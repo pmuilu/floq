@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender};
+use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender, Message};
 use std::sync::{Arc, Mutex};
 use std::marker::PhantomData;
 use tracing::{debug, error};
@@ -55,10 +55,10 @@ where
             
             // Apply reducer function to current value
             if let Ok(mut current) = self.current_value.lock() {
-                (self.reducer)(&mut current, item);
+                (self.reducer)(&mut current, item.payload);
                 
                 // Send the updated value
-                if let Err(e) = output.send(current.clone()) {
+                if let Err(e) = output.send(Message::new(current.clone())) {
                     error!("Failed to send reduced value: {:?}", e);
                     break;
                 }

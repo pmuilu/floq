@@ -1,6 +1,7 @@
 use serde_cbor::Value;
 use std::collections::BTreeMap;
 use crate::pipeline::channel::Sender;
+use crate::pipeline::Message;
 use tracing::{debug, error};
 use futures::stream::StreamExt;
 use rs_car::CarReader;
@@ -96,7 +97,7 @@ impl FirehoseMessage {
                 if type_str == "app.bsky.feed.post" {
                     debug!("Found a post!");
                     if let Some(Value::Text(text)) = map.get(&Value::Text("text".to_string())) {
-                        if let Err(e) = output.send(text.clone()) {
+                        if let Err(e) = output.send(Message::new(text.clone())) {
                             error!("Failed to send text to channel: {:?}", e);
                         } else {
                             debug!("Successfully sent post to channel");

@@ -19,7 +19,8 @@ impl PipelineComponent for StringCollector {
 
     async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("StringCollector starting");
-        while let Ok(text) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let text = msg.payload;
             debug!("StringCollector received {}", text);
             if let Ok(mut results) = self.results.lock() {
                 results.push(text.clone());

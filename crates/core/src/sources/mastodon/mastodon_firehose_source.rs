@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message as FloqMessage};
 use crate::pipeline::{Receiver, Sender};
 use futures::StreamExt;
 use tokio_tungstenite::connect_async;
@@ -113,7 +113,7 @@ impl PipelineComponent for MastodonFirehoseSource {
                                     // Parse the payload as a status
                                     if let Ok(status) = serde_json::from_str::<MastodonStatus>(&event.payload) {
                                         debug!("Parsed status: {}", status.content);
-                                        if let Err(e) = output.send(status.content) {
+                                        if let Err(e) = output.send(FloqMessage::new(status.content)) {
                                             error!("Failed to send status: {:?}", e);
                                             break;
                                         }

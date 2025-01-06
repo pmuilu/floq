@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ impl PipelineComponent for NumberSource {
         eprintln!("NumberSource starting");
         for i in 0..self.count {
             eprintln!("NumberSource sending {}", i);
-            if output.send(i as i32).is_err() {
+            if output.send(Message::new(i as i32)).is_err() {
                 eprintln!("NumberSource failed to send {}", i);
                 break;
             }

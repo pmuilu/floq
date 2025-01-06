@@ -43,9 +43,11 @@ impl PipelineComponent for Filter {
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("Filter starting");
         
-        while let Ok(text) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let text = msg.payload.clone();
+
             debug!("Filter received text: {}", text);
-            
+
             let matches = match &self.condition {
                 FilterCondition::Regex(pattern) => pattern.is_match(&text),
                 FilterCondition::Lambda(f) => f(&text),
@@ -53,7 +55,7 @@ impl PipelineComponent for Filter {
             
             if matches {
                 debug!("Text matches condition, forwarding");
-                if let Err(e) = output.send(text) {
+                if let Err(e) = output.send(msg) {
                     error!("Failed to send filtered text: {:?}", e);
                     break;
                 }

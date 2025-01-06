@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender};
+use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender, Message};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::marker::PhantomData;
@@ -58,23 +58,26 @@ impl<T> Window<T> {
         }
     }
 
-    fn get_window_items(&self, now: u64, buffer: &mut Vec<(T, u64)>) -> Vec<T> 
+    fn get_window_items(&self, now: u64, buffer: &mut Vec<Message<T>>) -> Message<Vec<T>> 
     where T: Clone 
     {
         match self.condition {
             WindowCondition::Count(_) => {
-                buffer.drain(0..).map(|(item, _)| item).collect()
+                let items = buffer.drain(0..).map(|msg| msg.payload.clone()).collect();
+                Message::new(items)
             },
             WindowCondition::Time(_) => {
-                buffer.drain(0..).map(|(item, _)| item).collect()
+                let items = buffer.drain(0..).map(|msg| msg.payload.clone()).collect();
+                Message::new(items)
             },
             WindowCondition::Sliding { window_size, .. } => {
                 // Remove items outside the window
                 let cutoff = now - window_size.as_millis() as u64;
-                buffer.retain(|(_, timestamp)| *timestamp >= cutoff);
+                buffer.retain(|msg| msg.event_timestamp >= cutoff);
                 
                 // Return clones of all items in the window
-                buffer.iter().map(|(item, _)| item.clone()).collect()
+                let items = buffer.iter().map(|msg| msg.payload.clone()).collect();
+                Message::new(items)
             }
         }
     }
@@ -91,7 +94,7 @@ impl<T: Send + Sync + Clone + 'static> PipelineComponent for Window<T> {
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("Window starting");
         
-        let mut buffer: Vec<(T, u64)> = Vec::new();
+        let mut buffer: Vec<Message<T>> = Vec::new();
         let mut last_trigger = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -104,11 +107,11 @@ impl<T: Send + Sync + Clone + 'static> PipelineComponent for Window<T> {
                 .as_millis() as u64;
             
             // Use the message's event timestamp
-            buffer.push((msg, now));
+            buffer.push(msg);
             
             if self.should_trigger(buffer.len(), last_trigger) {
                 let items_to_send = self.get_window_items(now, &mut buffer);
-                if !items_to_send.is_empty() {
+                if !items_to_send.payload.is_empty() {
                     if let Err(e) = output.send(items_to_send) {
                         error!("Failed to send windowed items: {:?}", e);
                         break;
@@ -120,8 +123,8 @@ impl<T: Send + Sync + Clone + 'static> PipelineComponent for Window<T> {
         
         // Send any remaining items
         if !buffer.is_empty() {
-            let remaining_items = buffer.drain(..).map(|(item, _)| item).collect::<Vec<_>>();
-            if let Err(e) = output.send(remaining_items) {
+            let remaining_items = buffer.drain(..).map(|msg| msg.payload.clone()).collect::<Vec<_>>();
+            if let Err(e) = output.send(Message::new(remaining_items)) {
                 error!("Failed to send final windowed items: {:?}", e);
             }
         }

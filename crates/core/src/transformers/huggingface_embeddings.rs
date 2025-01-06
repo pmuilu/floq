@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 use tracing::{debug, error};
 use serde_json::{json, Value};
@@ -23,7 +23,8 @@ impl PipelineComponent for HuggingfaceEmbeddings {
 
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         debug!("HuggingfaceEmbeddings starting");
-        while let Ok(text) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let text = msg.payload.clone();
             debug!("Processing text for embeddings");
             
             // Format for feature-extraction pipeline
@@ -36,7 +37,7 @@ impl PipelineComponent for HuggingfaceEmbeddings {
 
             match self.get_embeddings(body).await {
                 Ok(embeddings) => {
-                    if let Err(e) = output.send(embeddings) {
+                    if let Err(e) = output.send(Message::with_new_payload(msg, embeddings)) {
                         error!("Failed to send embeddings: {:?}", e);
                         break;
                     }

@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Sender, Receiver};
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -67,7 +67,7 @@ impl PipelineComponent for WebSocketMqttSource {
                 Ok(notification) => {
                     if let rumqttc::Event::Incoming(rumqttc::Packet::Publish(msg)) = notification {
                         if let Ok(payload) = String::from_utf8(msg.payload.to_vec()) {
-                            if let Err(e) = output.send(payload) {
+                            if let Err(e) = output.send(Message::new(payload)) {
                                 error!("Failed to send message to output: {}", e);
                                 break;
                             }

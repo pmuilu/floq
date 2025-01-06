@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -14,9 +14,10 @@ impl PipelineComponent for NumberDoubler {
 
     async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         eprintln!("NumberDoubler starting");
-        while let Ok(num) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let num = msg.payload;
             eprintln!("NumberDoubler received {}", num);
-            if output.send(num * 2).is_err() {
+            if output.send(Message::with_new_payload(msg, num * 2)).is_err() {
                 eprintln!("NumberDoubler failed to send {}", num * 2);
                 break;
             }

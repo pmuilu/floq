@@ -18,7 +18,8 @@ impl PipelineComponent for NumberCollector {
 
     async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
         eprintln!("NumberCollector starting");
-        while let Ok(num) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let num = msg.payload;
             eprintln!("NumberCollector received {}", num);
             if let Ok(mut results) = self.results.lock() {
                 results.push(num);

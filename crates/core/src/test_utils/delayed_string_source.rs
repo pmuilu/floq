@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 
 use std::sync::Arc;
@@ -31,7 +31,7 @@ impl PipelineComponent for DelayedStringSource {
             tokio::time::sleep(*delay).await;
             
             // Send the item
-            if let Err(_) = output.send(item.clone()) {
+            if let Err(_) = output.send(Message::new(item.clone())) {
                 break;
             }
         }

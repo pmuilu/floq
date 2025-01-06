@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
+use std::fmt;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Message<T> {
@@ -8,6 +9,12 @@ pub struct Message<T> {
     pub ingestion_timestamp: u64,
     pub source_id: Option<String>,
     // Add other metadata fields as needed
+}
+
+impl<T: fmt::Display> fmt::Display for Message<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.payload)
+    }
 }
 
 impl<T> Message<T> {
@@ -22,6 +29,15 @@ impl<T> Message<T> {
             event_timestamp: now,
             ingestion_timestamp: now,
             source_id: None,
+        }
+    }
+
+    pub fn with_new_payload<U>(self, new_payload: U) -> Message<U> {
+        Message {
+            payload: new_payload,
+            event_timestamp: self.event_timestamp,
+            ingestion_timestamp: self.ingestion_timestamp,
+            source_id: self.source_id.clone(),
         }
     }
 

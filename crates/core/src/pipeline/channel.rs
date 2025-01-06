@@ -46,8 +46,8 @@ impl<T> Clone for Receiver<T> {
 }
 
 impl<T> Sender<T> {
-    pub fn send(&self, value: T) -> Result<(), crossbeam_channel::SendError<Message<T>>> {
-        let mut msg = Message::new(value);
+    pub fn send(&self, value: Message<T>) -> Result<(), crossbeam_channel::SendError<Message<T>>> {
+        let mut msg = value;
         if let Some(source_id) = self.source_id.as_ref() {
             msg = msg.with_source(source_id.clone());
         }
@@ -64,9 +64,9 @@ impl<T> Sender<T> {
 }
 
 impl<T> Receiver<T> {
-    pub fn recv(&self) -> Result<T, crossbeam_channel::RecvError> {
+    pub fn recv(&self) -> Result<Message<T>, crossbeam_channel::RecvError> {
         let msg = self.inner.recv()?;
-        Ok(msg.payload)
+        Ok(msg)
     }
 }
 

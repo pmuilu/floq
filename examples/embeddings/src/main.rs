@@ -33,7 +33,8 @@ impl PipelineComponent for VectorDebugPrinter {
 
     async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _task: Arc<ComponentContext<Self>>) {
         debug!("VectorDebugPrinter starting");
-        while let Ok(vectors) = input.recv() {
+        while let Ok(msg) = input.recv() {
+            let vectors = msg.payload;
             info!("Received {} embeddings:", vectors.len());
             for (i, vector) in vectors.iter().enumerate() {
                 info!("  Embedding {}: {} dimensions. First 5 values: {:?}", 

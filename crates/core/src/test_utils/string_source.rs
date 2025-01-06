@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
+use crate::pipeline::{PipelineComponent, ComponentContext, Message};
 use crate::pipeline::channel::{Receiver, Sender};
 use std::sync::Arc;
 use tracing::debug;
@@ -21,7 +21,7 @@ impl PipelineComponent for StringSource {
         debug!("StringSource starting");
         for s in &self.strings {
             debug!("StringSource sending {}", s);
-            if output.send(s.clone()).is_err() {
+            if output.send(Message::new(s.clone())).is_err() {
                 debug!("StringSource failed to send {}", s);
                 break;
             }
