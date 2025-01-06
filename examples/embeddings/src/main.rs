@@ -71,8 +71,8 @@ async fn main() {
     let access_token = std::env::var("MASTODON_ACCESS_TOKEN").expect("MASTODON_ACCESS_TOKEN not set");
     let source = PipelineTask::new(MastodonFirehoseSource::with_token("https://mastodon.social".to_string(), access_token));
     
-     // Crude HTML stripper as Mastodon messages are HTML
-     let html_stripper = PipelineTask::new(Map::new(strip_html));
+    // Crude HTML stripper as Mastodon messages are HTML
+    let html_stripper = PipelineTask::new(Map::new(strip_html));
 
     // Splitter will split the incoming data into the slots of next component
     let splitter = PipelineTask::new(RoundRobinSplitter::new());
