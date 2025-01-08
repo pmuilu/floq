@@ -61,12 +61,28 @@ impl<T> Sender<T> {
         }
         self.inner.send(msg)
     }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
+    }
 }
 
 impl<T> Receiver<T> {
     pub fn recv(&self) -> Result<Message<T>, crossbeam_channel::RecvError> {
         let msg = self.inner.recv()?;
         Ok(msg)
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn capacity(&self) -> Option<usize> {
+        self.inner.capacity()
     }
 }
 
