@@ -219,6 +219,22 @@ impl<T: PipelineComponent> PipelineTask<T> {
         }))
     }
 
+    pub fn combine<U>(self, sources: Vec<PipelineTask<U>>) -> PipelineTask<T, U>
+    where 
+        U: PipelineComponent<Output = T::Output> + 'static
+    {
+        PipelineTask(Arc::new(PipelineTaskArc {
+            component: self.0.component.clone(),
+            input_receivers: self.0.input_receivers.clone(),
+            input_senders: self.0.input_senders.clone(),
+            output_receivers: self.0.output_receivers.clone(),
+            output_senders: self.0.output_senders.clone(),
+            tasks: self.0.tasks.clone(),
+            slots: self.0.slots,
+            combined_sources: sources.into_iter().map(|task| task.0).collect(),
+        }))
+    }
+
     pub fn inner(&self) -> Arc<PipelineTaskArc<T>> {
         self.0.clone()
     }
