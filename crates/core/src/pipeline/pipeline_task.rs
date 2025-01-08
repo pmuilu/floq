@@ -1,23 +1,24 @@
 use super::channel::{Sender, Receiver};
+
 use std::ops::BitOr;
 use tokio::task::JoinHandle;
 use tracing::{debug, error};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use super::pipeline_component::PipelineComponent;
 use super::component_context::ComponentContext;
 
-pub struct PipelineTask<T: PipelineComponent, S: PipelineComponent<Output = T::Output> = T> {
+pub struct PipelineTaskArc<T: PipelineComponent, S: PipelineComponent<Output = T::Output> = T> {
     component: Arc<T>,
     input_receivers: Vec<Receiver<T::Input>>,
     input_senders: Vec<Sender<T::Input>>,
     output_receivers: Vec<Receiver<T::Output>>,
     output_senders: Vec<Sender<T::Output>>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     slots: usize,
-    combined_sources: Vec<PipelineTask<S>>,
+    combined_sources: Vec<Arc<PipelineTaskArc<S>>>,
 }
 
-impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTask<T, S> {
+impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTaskArc<T, S> {
     fn deploy_to_slots(&self) -> Vec<JoinHandle<()>> {
         let mut new_tasks = Vec::new();
 
@@ -41,16 +42,16 @@ impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTas
         new_tasks
     }
 
-    pub async fn run(self) {
+    pub async fn run(&self) {
         let mut final_tasks = Vec::new();
-        let tasks = self.tasks;
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap());
         let context = Arc::new(ComponentContext {
             output_senders: self.output_senders.clone(),
             input_receivers: self.input_receivers.clone(),
         });
 
         // Spawn a task for each slot
-        for (index, input_receiver) in self.input_receivers.into_iter().enumerate() {
+        for (index, input_receiver) in self.input_receivers.iter().cloned().enumerate() {
             let component = Arc::clone(&self.component);
             let context = Arc::clone(&context);
             
@@ -78,23 +79,75 @@ impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> PipelineTas
             }
         }
     }
+
+    fn connect_with<B: PipelineComponent<Input = T::Output>>(mut self, rhs: PipelineTaskArc<B>) -> PipelineTaskArc<B> {
+        self.output_senders = Vec::new();
+        self.output_receivers = Vec::new();
+        
+        for _ in 0..rhs.slots {
+            let (output_s, output_r) = crate::pipeline::channel::channel();
+            self.output_senders.push(output_s);
+            self.output_receivers.push(output_r);
+        }
+        
+        let mut new_tasks = self.deploy_to_slots();
+        
+        if !self.combined_sources.is_empty() {
+            for source in &self.combined_sources {
+                let component = Arc::clone(&source.component);
+                let context = Arc::new(ComponentContext {
+                    output_senders: self.output_senders.clone(),
+                    input_receivers: source.input_receivers.clone(),
+                });
+                let default_receiver = source.input_receivers[0].clone();
+                let default_sender = self.output_senders[0].clone();
+                
+                let task = tokio::spawn(async move {
+                    debug!("Starting pipeline task");
+                    component.run(default_receiver, default_sender, context).await;
+                    debug!("Pipeline task completed");
+                });
+                new_tasks.push(task);
+            }
+        }
+
+        // Move tasks from self into new_tasks
+        if let Ok(mut tasks) = self.tasks.lock() {
+            new_tasks.extend(tasks.drain(..));
+        }
+
+        PipelineTaskArc {
+            component: rhs.component.clone(),
+            input_receivers: self.output_receivers,
+            input_senders: rhs.input_senders.clone(),
+            output_receivers: rhs.output_receivers.clone(),
+            output_senders: rhs.output_senders.clone(),
+            tasks: Arc::new(Mutex::new(new_tasks)),
+            slots: rhs.slots,
+            combined_sources: Vec::new(),
+        }
+    }
 }
+
+// Wrapper type that holds Arc<PipelineTaskArc>
+#[derive(Clone)]
+pub struct PipelineTask<T: PipelineComponent, S: PipelineComponent<Output = T::Output> = T>(Arc<PipelineTaskArc<T, S>>);
 
 impl<T: PipelineComponent> PipelineTask<T> {
     pub fn new(component: T) -> Self {
         let (input_sender, input_receiver) = crate::pipeline::channel::channel();
         let (output_sender, output_receiver) = crate::pipeline::channel::channel();
-        
-        PipelineTask {
+
+        PipelineTask(Arc::new(PipelineTaskArc {
             component: Arc::new(component),
             input_receivers: vec![input_receiver],
             input_senders: vec![input_sender],
             output_receivers: vec![output_receiver],
             output_senders: vec![output_sender],
-            tasks: Vec::new(),
+            tasks: Arc::new(Mutex::new(Vec::new())),
             slots: 1,
             combined_sources: Vec::new(),
-        }
+        }))
     }   
 
     pub fn with_slots(component: T, slots: usize) -> Self {
@@ -119,32 +172,24 @@ impl<T: PipelineComponent> PipelineTask<T> {
         debug!("Output senders created: {}", output_senders.len());
         debug!("Output receivers created: {}", output_receivers.len());
 
-        PipelineTask {
+        PipelineTask(Arc::new(PipelineTaskArc {
             component: Arc::new(component),
             input_receivers,
             input_senders,
             output_receivers,
             output_senders,
-            tasks: Vec::new(),
+            tasks: Arc::new(Mutex::new(Vec::new())),
             slots,
             combined_sources: Vec::new(),
-        }
+        }))
     }
 
-    pub fn combine<U>(self, sources: Vec<PipelineTask<U>>) -> PipelineTask<T, U>
-    where 
-        U: PipelineComponent<Output = T::Output> + 'static
-    {
-        PipelineTask {
-            component: self.component,
-            input_receivers: self.input_receivers,
-            input_senders: self.input_senders,
-            output_receivers: self.output_receivers,
-            output_senders: self.output_senders,
-            tasks: self.tasks,
-            slots: self.slots,
-            combined_sources: sources,
-        }
+    pub fn inner(&self) -> Arc<PipelineTaskArc<T>> {
+        self.0.clone()
+    }
+
+    pub async fn run(&self) {
+        self.0.run().await
     }
 }
 
@@ -158,55 +203,18 @@ where
 {
     type Output = PipelineTask<B>;
 
-    fn bitor(mut self, rhs: PipelineTask<B>) -> PipelineTask<B> {
-        // Adjust output senders to match rhs input senders
-        self.output_senders = Vec::new();
-        self.output_receivers = Vec::new();
+    fn bitor(self, rhs: PipelineTask<B>) -> PipelineTask<B> {
+        // Get ownership of both inner values
+        let self_inner = Arc::try_unwrap(self.0).unwrap_or_else(|arc| {
+            panic!("Cannot connect pipeline stages: multiple references to source stage exist")
+        });
+        let rhs_inner = Arc::try_unwrap(rhs.0).unwrap_or_else(|arc| {
+            panic!("Cannot connect pipeline stages: multiple references to target stage exist")
+        });
 
-        for _ in 0..rhs.slots {
-            let (output_s, output_r) = crate::pipeline::channel::channel();
-            self.output_senders.push(output_s);
-            self.output_receivers.push(output_r);
-        }
-        
-        let mut new_tasks = self.deploy_to_slots();
-        
-        if !self.combined_sources.is_empty() {
-            for source in self.combined_sources {
-                
-                println!("processing combined source: {:?}", source.output_senders);
-                
-                let component = Arc::clone(&source.component);
-                let context = Arc::new(ComponentContext {
-                    output_senders: self.output_senders.clone(),
-                    input_receivers: source.input_receivers.clone(),
-                });
-                let default_receiver = source.input_receivers[0].clone();
-                let default_sender = self.output_senders[0].clone();
-                
-                let task = tokio::spawn(async move {
-                    debug!("Starting pipeline task");
-                    component.run(default_receiver, default_sender, context).await;
-                    debug!("Pipeline task completed");
-                });
-                new_tasks.push(task);
-                
-            }
-        }
-
-        new_tasks.extend(self.tasks);
-
-        PipelineTask {
-            component: rhs.component,
-            input_receivers: self.output_receivers,
-            input_senders: rhs.input_senders,
-            output_receivers: rhs.output_receivers,
-            output_senders: rhs.output_senders,
-            tasks: new_tasks,
-            slots: rhs.slots,
-            combined_sources: Vec::new(),
-        }
+        // Connect the pipeline stages
+        let connected = self_inner.connect_with(rhs_inner);
+        PipelineTask(Arc::new(connected))
     }
-
-    
 }
+
