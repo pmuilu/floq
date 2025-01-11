@@ -22,16 +22,30 @@ pub struct PipelineTaskArc<T: PipelineComponent, S: PipelineComponent<Output = T
 impl<T: PipelineComponent, S: PipelineComponent<Output = T::Output>> MonitoredTask for PipelineTaskArc<T, S> {
     fn get_metrics(&self) -> Vec<(String, usize, usize)> {
         let mut metrics = Vec::new();
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
 
         if let Ok(senders) = self.output_senders.lock() {
             for sender in senders.iter() {
                 metrics.push(("output_senders".to_string(), sender.len(), sender.capacity().unwrap_or(0)));
+                let last_send = sender.last_send_time();
+                if last_send > 0 {
+                    let lag = current_time.saturating_sub(last_send);
+                    metrics.push(("send_lag_ms".to_string(), lag as usize, 0));
+                }
             }
         }
 
         if let Ok(receivers) = self.output_receivers.lock() {
             for receiver in receivers.iter() {
                 metrics.push(("output_receivers".to_string(), receiver.len(), receiver.capacity().unwrap_or(0)));
+                let last_receive = receiver.last_receive_time();
+                if last_receive > 0 {
+                    let lag = current_time.saturating_sub(last_receive);
+                    metrics.push(("receive_lag_ms".to_string(), lag as usize, 0));
+                }
             }
         }
         metrics

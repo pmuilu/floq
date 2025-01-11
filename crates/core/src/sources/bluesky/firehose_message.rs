@@ -96,11 +96,17 @@ impl FirehoseMessage {
             if let Some(Value::Text(type_str)) = map.get(&Value::Text("$type".to_string())) {
                 if type_str == "app.bsky.feed.post" {
                     debug!("Found a post!");
-                    if let Some(Value::Text(text)) = map.get(&Value::Text("text".to_string())) {
-                        if let Err(e) = output.send(Message::new(text.clone())) {
-                            error!("Failed to send text to channel: {:?}", e);
-                        } else {
-                            debug!("Successfully sent post to channel");
+                    if let (Some(Value::Text(text)), Some(Value::Text(created_at))) = (
+                        map.get(&Value::Text("text".to_string())),
+                        map.get(&Value::Text("createdAt".to_string()))
+                    ) {
+                        if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(created_at) {
+                            let unix_ms = timestamp.timestamp_millis() as u64;
+                            if let Err(e) = output.send(Message::with_event_time(text.clone(), unix_ms)) {
+                                error!("Failed to send text to channel: {:?}", e);
+                            } else {
+                                debug!("Successfully sent post to channel");
+                            }
                         }
                     }
                 }

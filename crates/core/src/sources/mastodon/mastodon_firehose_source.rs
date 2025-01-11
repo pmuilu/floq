@@ -18,6 +18,7 @@ struct MastodonEvent {
 #[derive(Debug, Deserialize)]
 struct MastodonStatus {
     content: String,
+    created_at: String,
 }
 
 pub struct MastodonFirehoseSource {
@@ -113,9 +114,14 @@ impl PipelineComponent for MastodonFirehoseSource {
                                     // Parse the payload as a status
                                     if let Ok(status) = serde_json::from_str::<MastodonStatus>(&event.payload) {
                                         debug!("Parsed status: {}", status.content);
-                                        if let Err(e) = output.send(FloqMessage::new(status.content)) {
-                                            error!("Failed to send status: {:?}", e);
-                                            break;
+                                        if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&status.created_at) {
+                                            let unix_ms = timestamp.timestamp_millis() as u64;
+                                            if let Err(e) = output.send(FloqMessage::with_event_time(status.content, unix_ms)) {
+                                                error!("Failed to send status: {:?}", e);
+                                                break;
+                                            }
+                                        } else {
+                                            error!("Failed to parse timestamp: {}", status.created_at);
                                         }
                                     } else {
                                         debug!("Failed to parse payload as status: {}", event.payload);
