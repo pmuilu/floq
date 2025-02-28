@@ -22,7 +22,7 @@ impl PipelineComponent for GeminiEmbeddings {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("GeminiEmbeddings starting");
         while let Ok(msg) = input.recv() {
             let texts = msg.payload.clone();

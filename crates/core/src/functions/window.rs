@@ -91,7 +91,7 @@ impl<T: Send + Sync + Clone + 'static> PipelineComponent for Window<T> {
         Window::<T>::with_count(10)
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("Window starting");
         
         let mut buffer: Vec<Message<T>> = Vec::new();

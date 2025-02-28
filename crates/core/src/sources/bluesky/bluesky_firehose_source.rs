@@ -7,6 +7,7 @@ use crate::sources::bluesky::firehose_message::FirehoseMessage;
 use std::sync::Arc;
 
 
+#[derive(Clone)]
 pub struct BlueskyFirehoseSource {
     url: String
 }
@@ -21,7 +22,7 @@ impl PipelineComponent for BlueskyFirehoseSource {
         }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         info!("Starting BlueskyFirehoseSource");
         let (ws_stream, _) = connect_async(&self.url).await.expect("Failed to connect");
         info!("Connected to WebSocket");

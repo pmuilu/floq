@@ -18,7 +18,7 @@ impl<T: Send + Sync + 'static> PipelineComponent for Merger<T> {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("Merger starting");
         let input_receivers = &context.input_receivers;
         let output_senders = &context.output_senders;

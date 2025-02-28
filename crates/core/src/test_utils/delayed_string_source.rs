@@ -23,7 +23,7 @@ impl PipelineComponent for DelayedStringSource {
         DelayedStringSource { items: Vec::new() }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("DelayedStringSource starting");
         
         for (item, delay) in &self.items {

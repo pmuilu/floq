@@ -14,7 +14,7 @@ impl PipelineComponent for NumberSource {
         NumberSource { count: 3 }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         eprintln!("NumberSource starting");
         for i in 0..self.count {
             eprintln!("NumberSource sending {}", i);

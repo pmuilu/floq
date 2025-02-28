@@ -40,7 +40,7 @@ impl PipelineComponent for Filter {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("Filter starting");
         
         while let Ok(msg) = input.recv() {

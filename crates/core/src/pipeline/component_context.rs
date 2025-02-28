@@ -1,17 +1,17 @@
 use super::channel::{Sender, Receiver};
 use super::pipeline_component::PipelineComponent;
 
-pub struct ComponentContext<T: PipelineComponent> {
-    pub output_senders: Vec<Sender<T::Output>>,
-    pub input_receivers: Vec<Receiver<T::Input>>,
+pub struct ComponentContext<Input, Output> {
+    pub output_senders: Vec<Sender<Output>>,
+    pub input_receivers: Vec<Receiver<Input>>,
 }
 
-impl<T: PipelineComponent> ComponentContext<T> {
-    pub fn get_output_senders(&self) -> &Vec<Sender<T::Output>> {
+impl<Input, Output> ComponentContext<Input, Output> {
+    pub fn get_output_senders(&self) -> &Vec<Sender<Output>> {
         &self.output_senders
     }
 
-    pub fn get_input_receivers(&self) -> &Vec<Receiver<T::Input>> {
+    pub fn get_input_receivers(&self) -> &Vec<Receiver<Input>> {
         &self.input_receivers
     }
 }

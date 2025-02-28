@@ -21,7 +21,7 @@ impl PipelineComponent for HuggingfaceEmbeddings {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("HuggingfaceEmbeddings starting");
         while let Ok(msg) = input.recv() {
             let text = msg.payload.clone();

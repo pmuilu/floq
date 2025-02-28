@@ -79,7 +79,7 @@ impl PipelineComponent for MastodonFirehoseSource {
         MastodonFirehoseSource::new("https://mastodon.social".to_string())
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("MastodonFirehoseSource starting");
 
         let url = match self.build_websocket_url() {

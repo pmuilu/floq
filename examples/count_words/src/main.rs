@@ -34,7 +34,7 @@ impl PipelineComponent for HashMapPrinterSink {
         HashMapPrinterSink {}
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _task: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _task: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("HashMapPrinterSink starting");
         while let Ok(msg) = input.recv() {
             info!("Word counts in last window:");

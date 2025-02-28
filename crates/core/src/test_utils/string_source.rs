@@ -17,7 +17,7 @@ impl PipelineComponent for StringSource {
         }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("StringSource starting");
         for s in &self.strings {
             debug!("StringSource sending {}", s);

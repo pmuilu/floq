@@ -41,7 +41,7 @@ where
         panic!("Map requires a transform function. Use Map::new() instead.")
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("Map starting");
         
         while let Ok(msg) = input.recv() {

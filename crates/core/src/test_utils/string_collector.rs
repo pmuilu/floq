@@ -17,7 +17,7 @@ impl PipelineComponent for StringCollector {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("StringCollector starting");
         while let Ok(msg) = input.recv() {
             let text = msg.payload;

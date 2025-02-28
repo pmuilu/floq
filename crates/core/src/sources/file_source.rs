@@ -26,7 +26,7 @@ impl PipelineComponent for FileSource {
         panic!("FileSource requires a file path. Use FileSource::new() instead.")
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("FileSource starting");
 
         let file = match File::open(&self.path).await {

@@ -21,7 +21,7 @@ impl<T: Send + Sync + 'static> PipelineComponent for RoundRobinSplitter<T> {
         }
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("RoundRobinSplitter starting");
         let output_senders = &context.output_senders;
         debug!("Number of output senders: {}", output_senders.len());

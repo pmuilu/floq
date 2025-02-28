@@ -47,7 +47,7 @@ where
         panic!("Reduce requires initial value and reducer function. Use Reduce::new() instead.")
     }
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
         debug!("Reduce starting");
         
         while let Ok(item) = input.recv() {
