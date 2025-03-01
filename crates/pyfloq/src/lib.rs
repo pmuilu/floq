@@ -9,12 +9,43 @@ use floq::transformers::PrinterSink;
 // A Python module implemented in Rust.
 #[pymodule]
 fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
-    pyo3_asyncio::tokio::get_runtime();
-    
     m.add_class::<PyPipelineComponent>()?;
     m.add_class::<PyBlueskyFirehoseSource>()?;
     m.add_class::<PyPrinterSink>()?;
     Ok(())
+}
+
+/// Trait for common pipeline wrapper functionality
+trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + IntoPy<PyObject> {
+    type Component: PipelineComponent<Input = In, Output = Out> + Clone + Send;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>>;
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self;
+
+    fn run_impl<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let task = self.get_task().clone();
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            task.run().await;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    fn or_impl<T, NextOut>(&self, other: &T) -> PyResult<PyObject> 
+    where 
+        T: PyPipelineWrapper<Out, NextOut>,
+        NextOut: Send + 'static,
+    {
+        Python::with_gil(|py| {
+            let rt = pyo3_asyncio::tokio::get_runtime();
+            rt.block_on(async {
+                let task = (*self.get_task()).clone() | (*other.get_task()).clone();
+                Ok(T::from_task_and_component(other.get_component().clone(), task).into_py(py))
+            })
+        })
+    }
+
+    fn get_component(&self) -> &Self::Component;
 }
 
 /// Python wrapper for a simple pipeline component
@@ -22,7 +53,28 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
 #[derive(Clone)]
 struct PyPipelineComponent {
     callback: PyObject,
+    component: RustPipelineComponent,
     task: Arc<PipelineTask<RustPipelineComponent>>,
+}
+
+impl PyPipelineWrapper<String, String> for PyPipelineComponent {
+    type Component = RustPipelineComponent;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            callback: component.callback.clone(),
+            component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.component
+    }
 }
 
 #[pymethods]
@@ -31,42 +83,26 @@ impl PyPipelineComponent {
     fn new(callback: PyObject) -> Self {
         let component = RustPipelineComponent { callback: callback.clone() };
         PyPipelineComponent {
-            callback,
+            callback: callback.clone(),
+            component: component.clone(),
             task: Arc::new(PipelineTask::new(component)),
         }
     }
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            let rt = pyo3_asyncio::tokio::get_runtime();
-            rt.block_on(async {
-                if let Ok(sink) = other.extract::<PyPrinterSink>(py) {
-                    Ok(PyPrinterSink::from_task(sink.sink.clone(), (*self.task).clone() | (*sink.task).clone()).into_py(py))
-                } else if let Ok(component) = other.extract::<PyPipelineComponent>(py) {
-                    Ok(PyPipelineComponent::from_task(component.callback.clone(), (*self.task).clone() | (*component.task).clone()).into_py(py))
-                } else {
-                    Err(PyRuntimeError::new_err("Unsupported pipeline composition"))
-                }
-            })
+            if let Ok(sink) = other.extract::<PyPrinterSink>(py) {
+                <Self as PyPipelineWrapper<String, String>>::or_impl(self, &sink)
+            } else if let Ok(component) = other.extract::<PyPipelineComponent>(py) {
+                <Self as PyPipelineWrapper<String, String>>::or_impl(self, &component)
+            } else {
+                Err(PyRuntimeError::new_err("Unsupported pipeline composition"))
+            }
         })
     }
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
-        let task = self.task.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            task.run().await;
-            Ok(Python::with_gil(|py| py.None()))
-        })
-    }
-}
-
-// Regular impl block for Rust-only methods
-impl PyPipelineComponent {
-    fn from_task(callback: PyObject, task: PipelineTask<RustPipelineComponent>) -> Self {
-        PyPipelineComponent {
-            callback,
-            task: Arc::new(task),
-        }
+        <Self as PyPipelineWrapper<String, String>>::run_impl(self, py)
     }
 }
 
@@ -76,6 +112,25 @@ impl PyPipelineComponent {
 struct PyBlueskyFirehoseSource {
     source: BlueskyFirehoseSource,
     task: Arc<PipelineTask<BlueskyFirehoseSource>>,
+}
+
+impl PyPipelineWrapper<(), String> for PyBlueskyFirehoseSource {
+    type Component = BlueskyFirehoseSource;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            source: component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.source
+    }
 }
 
 #[pymethods]
@@ -91,25 +146,18 @@ impl PyBlueskyFirehoseSource {
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            let rt = pyo3_asyncio::tokio::get_runtime();
-            rt.block_on(async {
-                if let Ok(sink) = other.extract::<PyPrinterSink>(py) {
-                    Ok(PyPrinterSink::from_task(sink.sink.clone(), (*self.task).clone() | (*sink.task).clone()).into_py(py))
-                } else if let Ok(component) = other.extract::<PyPipelineComponent>(py) {
-                    Ok(PyPipelineComponent::from_task(component.callback.clone(), (*self.task).clone() | (*component.task).clone()).into_py(py))
-                } else {
-                    Err(PyRuntimeError::new_err("Unsupported pipeline composition"))
-                }
-            })
+            if let Ok(sink) = other.extract::<PyPrinterSink>(py) {
+                <Self as PyPipelineWrapper<(), String>>::or_impl(self, &sink)
+            } else if let Ok(component) = other.extract::<PyPipelineComponent>(py) {
+                <Self as PyPipelineWrapper<(), String>>::or_impl(self, &component)
+            } else {
+                Err(PyRuntimeError::new_err("Unsupported pipeline composition"))
+            }
         })
     }
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
-        let task = self.task.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            task.run().await;
-            Ok(Python::with_gil(|py| py.None()))
-        })
+        <Self as PyPipelineWrapper<(), String>>::run_impl(self, py)
     }
 }
 
@@ -119,6 +167,25 @@ impl PyBlueskyFirehoseSource {
 struct PyPrinterSink {
     sink: PrinterSink,
     task: Arc<PipelineTask<PrinterSink>>,
+}
+
+impl PyPipelineWrapper<String, String> for PyPrinterSink {
+    type Component = PrinterSink;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            sink: component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.sink
+    }
 }
 
 #[pymethods]
@@ -132,22 +199,20 @@ impl PyPrinterSink {
         }
     }
 
-    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
-        let task = self.task.clone();
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            task.run().await;
-            Ok(Python::with_gil(|py| py.None()))
+    fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            if let Ok(sink) = other.extract::<PyPrinterSink>(py) {
+                <Self as PyPipelineWrapper<String, String>>::or_impl(self, &sink)
+            } else if let Ok(component) = other.extract::<PyPipelineComponent>(py) {
+                <Self as PyPipelineWrapper<String, String>>::or_impl(self, &component)
+            } else {
+                Err(PyRuntimeError::new_err("Unsupported pipeline composition"))
+            }
         })
     }
-}
 
-// Regular impl block for Rust-only methods
-impl PyPrinterSink {
-    fn from_task(sink: PrinterSink, task: PipelineTask<PrinterSink>) -> Self {
-        PyPrinterSink {
-            sink,
-            task: Arc::new(task),
-        }
+    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        <Self as PyPipelineWrapper<String, String>>::run_impl(self, py)
     }
 }
 
