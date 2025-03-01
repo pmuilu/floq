@@ -19,7 +19,7 @@ impl PrinterSink {
 
 impl PipelineComponent for PrinterSink {
     type Input = String;
-    type Output = String; // No real output, just for compatibility
+    type Output = (); // No real output, just for compatibility
 
     fn new() -> Self {
         PrinterSink {
