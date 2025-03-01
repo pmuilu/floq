@@ -8,10 +8,23 @@ where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
 {
-    reducer: Box<dyn Fn(&mut O, I) + Send + Sync>,
-
+    reducer: Arc<dyn Fn(&mut O, I) + Send + Sync>,
     current_value: Arc<Mutex<O>>,
     _phantom: PhantomData<I>,
+}
+
+impl<I, O> Clone for Reduce<I, O>
+where 
+    I: Send + Sync + 'static,
+    O: Send + Sync + Clone + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            reducer: self.reducer.clone(),  // Now this works because Arc implements Clone
+            current_value: self.current_value.clone(),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<I, O> Reduce<I, O> 
@@ -24,7 +37,7 @@ where
         F: Fn(&mut O, I) + Send + Sync + 'static,
     {
         Reduce {
-            reducer: Box::new(reducer),
+            reducer: Arc::new(reducer),  // Wrap in Arc here
             current_value: Arc::new(Mutex::new(initial)),
             _phantom: PhantomData,
         }

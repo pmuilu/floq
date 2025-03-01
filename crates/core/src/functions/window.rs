@@ -14,6 +14,7 @@ pub enum WindowCondition {
     },
 }
 
+#[derive(Clone)]
 pub struct Window<T> {
     condition: WindowCondition,
     _phantom: PhantomData<T>,

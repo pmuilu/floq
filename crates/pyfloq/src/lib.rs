@@ -1,10 +1,12 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use std::sync::Arc;
+use std::time::Duration;
 
 use floq::pipeline::{PipelineComponent, PipelineTask, ComponentContext, Sender, Receiver, Message};
 use floq::sources::BlueskyFirehoseSource;
-use floq::transformers::PrinterSink;
+use floq::transformers::{PrinterSink};
+use floq::functions::{Window, Reduce};
 use tokio::runtime::Handle;
 
 // A Python module implemented in Rust.
@@ -13,6 +15,8 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPipelineComponent>()?;
     m.add_class::<PyBlueskyFirehoseSource>()?;
     m.add_class::<PyPrinterSink>()?;
+    m.add_class::<PyWindow>()?;
+    m.add_class::<PyReduce>()?;
     Ok(())
 }
 
@@ -34,26 +38,51 @@ trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + IntoPy
 
     fn get_component(&self) -> &Self::Component;
 
-    // Composition method that works with any component that accepts String input
-    fn compose(&self, py: Python<'_>, other: &PyObject) -> PyResult<PyObject> 
+    /**
+    *   Compose pipeline components that take String as an Input.
+    */
+    fn compose_string(&self, py: Python<'_>, other: &PyObject) -> PyResult<PyObject> 
     where
         Out: 'static,
         Self::Component: PipelineComponent<Output = String>,
     {
+        let rt = pyo3_asyncio::tokio::get_runtime();
         if let Ok(printer_sink) = other.extract::<PyPrinterSink>(py) {
-            let rt = pyo3_asyncio::tokio::get_runtime();
             let task = rt.block_on(async {
                 (*self.get_task()).clone() | (*printer_sink.get_task()).clone()
             });
             Ok(PyPrinterSink::from_task_and_component(printer_sink.get_component().clone(), task).into_py(py))
         } else if let Ok(pipeline_component) = other.extract::<PyPipelineComponent>(py) {
-            let rt = pyo3_asyncio::tokio::get_runtime();
             let task = rt.block_on(async {
                 (*self.get_task()).clone() | (*pipeline_component.get_task()).clone()
             });
             Ok(PyPipelineComponent::from_task_and_component(pipeline_component.get_component().clone(), task).into_py(py))
+        } else if let Ok(window) = other.extract::<PyWindow>(py) {
+            let task = rt.block_on(async {
+                (*self.get_task()).clone() | (*window.get_task()).clone()
+            });
+            Ok(PyWindow::from_task_and_component(window.get_component().clone(), task).into_py(py))
         } else {
             Err(PyRuntimeError::new_err("Cannot connect: component must accept String input"))
+        }
+    }
+
+    /**
+    *   Compose pipeline components that take Vec<String> as an Input.
+    */
+    fn compose_vec_string(&self, py: Python<'_>, other: &PyObject) -> PyResult<PyObject> 
+    where
+        Out: 'static,
+        Self::Component: PipelineComponent<Output = Vec<String>>,
+    {
+        let rt = pyo3_asyncio::tokio::get_runtime();
+        if let Ok(reduce) = other.extract::<PyReduce>(py) {
+            let task = rt.block_on(async {
+                (*self.get_task()).clone() | (*reduce.get_task()).clone()
+            });
+            Ok(PyReduce::from_task_and_component(reduce.get_component().clone(), task).into_py(py))
+        } else {
+            Err(PyRuntimeError::new_err("Cannot connect: component must accept Vec<String> input"))
         }
     }
 }
@@ -101,7 +130,7 @@ impl PyPipelineComponent {
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            self.compose(py, &other)
+            self.compose_string(py, &other)
         })
     }
 
@@ -150,7 +179,7 @@ impl PyBlueskyFirehoseSource {
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            self.compose(py, &other)
+            self.compose_string(py, &other)
         })
     }
 
@@ -204,6 +233,121 @@ impl PyPrinterSink {
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         <Self as PyPipelineWrapper<String, ()>>::run_impl(self, py)
+    }
+}
+
+/// Python wrapper for Window
+#[pyclass]
+#[derive(Clone)]
+struct PyWindow {
+    window: Window<String>,
+    task: Arc<PipelineTask<Window<String>>>,
+}
+
+impl PyPipelineWrapper<String, Vec<String>> for PyWindow {
+    type Component = Window<String>;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            window: component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.window
+    }
+}
+
+#[pymethods]
+impl PyWindow {
+    #[new]
+    fn new(duration_ms: u64) -> Self {
+        let window = Window::with_duration(Duration::from_millis(duration_ms));
+
+        PyWindow {
+            window: window.clone(),
+            task: Arc::new(PipelineTask::new(window)),
+        }
+    }
+
+    fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            self.compose_vec_string(py, &other)
+        })
+    }
+
+    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        <Self as PyPipelineWrapper<String, Vec<String>>>::run_impl(self, py)
+    }
+}
+
+/// Python wrapper for Reduce
+#[pyclass]
+#[derive(Clone)]
+struct PyReduce {
+    callback: PyObject,
+    initial: PyObject,
+    reduce: Reduce<Vec<String>, PyObject>,
+    task: Arc<PipelineTask<Reduce<Vec<String>, PyObject>>>,
+}
+
+impl PyPipelineWrapper<Vec<String>, PyObject> for PyReduce {
+    type Component = Reduce<Vec<String>, PyObject>;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            callback: Python::with_gil(|py| py.None()),  // These fields are only used for new instances
+            initial: Python::with_gil(|py| py.None()),   // The task contains the actual reducer and state
+            reduce: component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.reduce
+    }
+}
+
+#[pymethods]
+impl PyReduce {
+    #[new]
+    fn new(initial: PyObject, callback: PyObject) -> Self {
+        Python::with_gil(|py| {
+            let callback_clone = callback.clone();
+            let reducer = move |acc: &mut PyObject, items: Vec<String>| {
+                Python::with_gil(|py| {
+                    if let Ok(result) = callback_clone.call1(py, (acc.clone_ref(py), items,)) {
+                        *acc = result;
+                    }
+                });
+            };
+
+            let reduce = Reduce::new(initial.clone_ref(py), reducer);
+            
+            PyReduce {
+                callback: callback.clone(),
+                initial: initial.clone(),
+                reduce: reduce.clone(),
+                task: Arc::new(PipelineTask::new(reduce)),
+            }
+        })
+    }
+
+    fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
+        Ok(Python::with_gil(|py| py.None()))
+    }
+
+    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        <Self as PyPipelineWrapper<Vec<String>, PyObject>>::run_impl(self, py)
     }
 }
 
