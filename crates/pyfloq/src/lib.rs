@@ -17,6 +17,7 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPrinterSink>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyReduce>()?;
+    m.add_class::<PyCollector>()?;
     Ok(())
 }
 
@@ -343,11 +344,96 @@ impl PyReduce {
     }
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
-        Ok(Python::with_gil(|py| py.None()))
+        Python::with_gil(|py| {
+            if let Ok(collector) = other.extract::<PyCollector>(py) {
+                let rt = pyo3_asyncio::tokio::get_runtime();
+                let task = rt.block_on(async {
+                    (*self.get_task()).clone() | (*collector.get_task()).clone()
+                });
+                Ok(PyCollector::from_task_and_component(collector.get_component().clone(), task).into_py(py))
+            } else {
+                Ok(py.None())
+            }
+        })
     }
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         <Self as PyPipelineWrapper<Vec<String>, PyObject>>::run_impl(self, py)
+    }
+}
+
+/// Python wrapper for Collector that stores items in a Python list
+#[pyclass]
+#[derive(Clone)]
+struct PyCollector {
+    callback: PyObject,
+    component: CollectorComponent,
+    task: Arc<PipelineTask<CollectorComponent>>,
+}
+
+#[derive(Clone)]
+struct CollectorComponent {
+    callback: PyObject,
+}
+
+impl PipelineComponent for CollectorComponent {
+    type Input = PyObject;
+    type Output = ();
+
+    fn new() -> Self {
+        panic!("CollectorComponent::new() should not be called directly")
+    }
+
+    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+        while let Ok(msg) = input.recv() {
+            Python::with_gil(|py| {
+                if let Err(e) = self.callback.call1(py, (msg.payload,)) {
+                    e.print(py);
+                }
+            });
+        }
+    }
+}
+
+impl PyPipelineWrapper<PyObject, ()> for PyCollector {
+    type Component = CollectorComponent;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            callback: component.callback.clone(),
+            component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.component
+    }
+}
+
+#[pymethods]
+impl PyCollector {
+    #[new]
+    fn new(callback: PyObject) -> Self {
+        let component = CollectorComponent { callback: callback.clone() };
+        PyCollector {
+            callback: callback.clone(),
+            component: component.clone(),
+            task: Arc::new(PipelineTask::new(component)),
+        }
+    }
+
+    fn __or__(&self, _other: PyObject) -> PyResult<PyObject> {
+        // Collector is a sink, it cannot be composed with other components
+        Err(PyRuntimeError::new_err("Cannot connect: Collector is a terminal component"))
+    }
+
+    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        <Self as PyPipelineWrapper<PyObject, ()>>::run_impl(self, py)
     }
 }
 

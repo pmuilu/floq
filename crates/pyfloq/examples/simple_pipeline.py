@@ -16,24 +16,35 @@ async def main():
         for message in messages:
             for word in message.split():
                 acc[word] = acc.get(word, 0) + 1
-        
-        print(acc)
-        
+
         return acc
     
     # Create the reduce component with initial value None and our reducer function
     reducer = pyfloq.PyReduce(None, count_words)
     
-    # Create source and sink
+    # Create source and collector
     source = pyfloq.PyBlueskyFirehoseSource()
-    sink = pyfloq.PyPrinterSink()
+    
+    # Collector callback that prints word counts
+    def print_counts(counts):
+        if counts:
+            print("\nWord counts in the last window:")
+            for word, count in sorted(counts.items()):
+                print(f"{word}: {count}")
+        else:
+            print("\nNo counts in this window")
+    
+    collector = pyfloq.PyCollector(print_counts)
     
     # Chain the tasks using the | operator:
-    # source -> window -> reducer -> sink
-    task = source | window | reducer #| sink
+    # source -> window -> reducer -> collector
+    task = source | window | reducer | collector
     
     # Run the pipeline
-    await task.run()
+    try:
+        await task.run()
+    except KeyboardInterrupt:
+        pass  # Allow graceful exit with Ctrl+C
 
 if __name__ == "__main__":
     asyncio.run(main()) 
