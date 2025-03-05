@@ -6,7 +6,7 @@ use std::time::Duration;
 use floq::pipeline::{PipelineComponent, PipelineTask, ComponentContext, Sender, Receiver, Message};
 use floq::sources::BlueskyFirehoseSource;
 use floq::transformers::{PrinterSink};
-use floq::functions::{Window, Reduce};
+use floq::functions::{Window, Reduce, Filter};
 use tokio::runtime::Handle;
 
 // A Python module implemented in Rust.
@@ -18,6 +18,7 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyWindow>()?;
     m.add_class::<PyReduce>()?;
     m.add_class::<PyCollector>()?;
+    m.add_class::<PyFilter>()?;
     Ok(())
 }
 
@@ -63,6 +64,11 @@ trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + IntoPy
                 (*self.get_task()).clone() | (*window.get_task()).clone()
             });
             Ok(PyWindow::from_task_and_component(window.get_component().clone(), task).into_py(py))
+        } else if let Ok(filter) = other.extract::<PyFilter>(py) {
+            let task = rt.block_on(async {
+                (*self.get_task()).clone() | (*filter.get_task()).clone()
+            });
+            Ok(PyFilter::from_task_and_component(filter.get_component().clone(), task).into_py(py))
         } else {
             Err(PyRuntimeError::new_err("Cannot connect: component must accept String input"))
         }
@@ -434,6 +440,74 @@ impl PyCollector {
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         <Self as PyPipelineWrapper<PyObject, ()>>::run_impl(self, py)
+    }
+}
+
+/// Python wrapper for Filter
+#[pyclass]
+#[derive(Clone)]
+struct PyFilter {
+    filter: Filter,
+    task: Arc<PipelineTask<Filter>>,
+}
+
+impl PyPipelineWrapper<String, String> for PyFilter {
+    type Component = Filter;
+    
+    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
+        self.task.clone()
+    }
+    
+    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+        Self {
+            filter: component,
+            task: Arc::new(task),
+        }
+    }
+
+    fn get_component(&self) -> &Self::Component {
+        &self.filter
+    }
+}
+
+#[pymethods]
+impl PyFilter {
+    #[new]
+    fn new(pattern: &str) -> PyResult<Self> {
+        match Filter::with_pattern(pattern) {
+            Ok(filter) => Ok(PyFilter {
+                filter: filter.clone(),
+                task: Arc::new(PipelineTask::new(filter)),
+            }),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Invalid regex pattern: {}", e)))
+        }
+    }
+
+    #[staticmethod]
+    fn with_lambda(callback: PyObject) -> Self {
+        let filter = Filter::with_lambda(move |text: &str| {
+            Python::with_gil(|py| {
+                match callback.call1(py, (text,)) {
+                    Ok(result) => result.extract::<bool>(py).unwrap_or(false),
+                    Err(_) => false,
+                }
+            })
+        });
+
+        PyFilter {
+            filter: filter.clone(),
+            task: Arc::new(PipelineTask::new(filter)),
+        }
+    }
+
+    fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            self.compose_string(py, &other)
+        })
+    }
+
+    fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        <Self as PyPipelineWrapper<String, String>>::run_impl(self, py)
     }
 }
 

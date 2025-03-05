@@ -4,11 +4,13 @@ use std::sync::Arc;
 use tracing::{debug, error};
 use regex::Regex;
 
+#[derive(Clone)]
 pub enum FilterCondition {
     Regex(Regex),
-    Lambda(Box<dyn Fn(&str) -> bool + Send + Sync>),
+    Lambda(Arc<dyn Fn(&str) -> bool + Send + Sync>),
 }
 
+#[derive(Clone)]
 pub struct Filter {
     condition: FilterCondition,
 }
@@ -25,7 +27,7 @@ impl Filter {
         F: Fn(&str) -> bool + Send + Sync + 'static 
     {
         Filter {
-            condition: FilterCondition::Lambda(Box::new(f)),
+            condition: FilterCondition::Lambda(Arc::new(f)),
         }
     }
 }

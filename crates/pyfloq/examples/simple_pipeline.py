@@ -36,9 +36,11 @@ async def main():
     
     collector = pyfloq.PyCollector(print_counts)
     
+    ai_filter = pyfloq.PyFilter(r"(Elon|Musk)")
+
     # Chain the tasks using the | operator:
     # source -> window -> reducer -> collector
-    task = source | window | reducer | collector
+    task = source | ai_filter | window  | reducer | collector
     
     # Run the pipeline
     try:
