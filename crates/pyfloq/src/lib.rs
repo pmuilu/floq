@@ -17,6 +17,7 @@ mod py_reduce;
 mod py_collector;
 mod py_pipeline_component;
 mod py_bluesky_firehose;
+mod py_map;
 
 use py_filter::PyFilter;
 use py_printer_sink::PyPrinterSink;
@@ -25,6 +26,7 @@ use py_reduce::PyReduce;
 use py_collector::PyCollector;
 use py_pipeline_component::PyPipelineComponent;
 use py_bluesky_firehose::PyBlueskyFirehoseSource;
+use py_map::PyMap;
 
 // A Python module implemented in Rust.
 #[pymodule]
@@ -36,5 +38,6 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyReduce>()?;
     m.add_class::<PyCollector>()?;
     m.add_class::<PyFilter>()?;
+    m.add_class::<PyMap>()?;
     Ok(())
 }

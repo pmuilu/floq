@@ -9,8 +9,21 @@ where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
 {
-    transform: Box<dyn Fn(I) -> O + Send + Sync>,
+    transform: Arc<dyn Fn(I) -> O + Send + Sync>,
     _phantom: PhantomData<(I, O)>,
+}
+
+impl<I, O> Clone for Map<I, O>
+where 
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transform: self.transform.clone(),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<I, O> Map<I, O> 
@@ -23,7 +36,7 @@ where
         F: Fn(I) -> O + Send + Sync + 'static,
     {
         Map {
-            transform: Box::new(transform),
+            transform: Arc::new(transform),
             _phantom: PhantomData,
         }
     }

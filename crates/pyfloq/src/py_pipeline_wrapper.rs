@@ -6,6 +6,7 @@ use crate::py_filter::PyFilter;
 use crate::py_printer_sink::PyPrinterSink;
 use crate::py_window::PyWindow;
 use crate::py_reduce::PyReduce;
+use crate::py_map::PyMap;
 use crate::py_pipeline_component::PyPipelineComponent;
 
 /// Trait for common pipeline wrapper functionality
@@ -74,6 +75,11 @@ pub trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + In
                 (*self.get_task()).clone() | (*reduce.get_task()).clone()
             });
             Ok(PyReduce::from_task_and_component(reduce.get_component().clone(), task).into_py(py))
+        } else if let Ok(map) = other.extract::<PyMap>(py) {
+            let task = rt.block_on(async {
+                (*self.get_task()).clone() | (*map.get_task()).clone()
+            });
+            Ok(PyMap::from_task_and_component(map.get_component().clone(), task).into_py(py))
         } else {
             Err(PyRuntimeError::new_err("Cannot connect: component must accept Vec<String> input"))
         }
