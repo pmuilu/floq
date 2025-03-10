@@ -5,13 +5,11 @@ use std::time::Duration;
 
 use floq::pipeline::{PipelineComponent, PipelineTask, ComponentContext, Sender, Receiver, Message};
 use floq::sources::BlueskyFirehoseSource;
-use floq::transformers::{PrinterSink};
 use floq::functions::{Window, Reduce, Filter};
 use tokio::runtime::Handle;
 
 mod py_pipeline_wrapper;
 mod py_filter;
-mod py_printer_sink;
 mod py_window;
 mod py_reduce;
 mod py_collector;
@@ -20,7 +18,6 @@ mod py_bluesky_firehose;
 mod py_map;
 
 use py_filter::PyFilter;
-use py_printer_sink::PyPrinterSink;
 use py_window::PyWindow;
 use py_reduce::PyReduce;
 use py_collector::PyCollector;
@@ -33,7 +30,6 @@ use py_map::PyMap;
 fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPipelineComponent>()?;
     m.add_class::<PyBlueskyFirehoseSource>()?;
-    m.add_class::<PyPrinterSink>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyReduce>()?;
     m.add_class::<PyCollector>()?;

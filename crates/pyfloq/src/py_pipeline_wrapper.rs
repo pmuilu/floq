@@ -3,7 +3,6 @@ use pyo3::exceptions::PyRuntimeError;
 use std::sync::Arc;
 use floq::pipeline::{PipelineComponent, PipelineTask};
 use crate::py_filter::PyFilter;
-use crate::py_printer_sink::PyPrinterSink;
 use crate::py_window::PyWindow;
 use crate::py_reduce::PyReduce;
 use crate::py_map::PyMap;
@@ -52,7 +51,6 @@ pub trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + In
     {
         let rt = pyo3_asyncio::tokio::get_runtime();
         
-        try_compose!(self, py, rt, other, PyPrinterSink);
         try_compose!(self, py, rt, other, PyPipelineComponent);
         try_compose!(self, py, rt, other, PyWindow);
         try_compose!(self, py, rt, other, PyFilter);
