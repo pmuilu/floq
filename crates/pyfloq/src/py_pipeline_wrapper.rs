@@ -9,6 +9,21 @@ use crate::py_reduce::PyReduce;
 use crate::py_map::PyMap;
 use crate::py_pipeline_component::PyPipelineComponent;
 
+/// Macro for composing pipeline components
+macro_rules! try_compose {
+    ($self:expr, $py:expr, $rt:expr, $other:expr, $component_type:ty) => {
+        if let Ok(component) = $other.extract::<$component_type>($py) {
+            let task = $rt.block_on(async {
+                (*$self.get_task()).clone() | (*component.get_task()).clone()
+            });
+            return Ok(<$component_type>::from_task_and_component(
+                component.get_component().clone(), 
+                task
+            ).into_py($py));
+        }
+    };
+}
+
 /// Trait for common pipeline wrapper functionality
 pub trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + IntoPy<PyObject> {
     type Component: PipelineComponent<Input = In, Output = Out> + Clone + Send;
@@ -36,29 +51,13 @@ pub trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + In
         Self::Component: PipelineComponent<Output = String>,
     {
         let rt = pyo3_asyncio::tokio::get_runtime();
-        if let Ok(printer_sink) = other.extract::<PyPrinterSink>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*printer_sink.get_task()).clone()
-            });
-            Ok(PyPrinterSink::from_task_and_component(printer_sink.get_component().clone(), task).into_py(py))
-        } else if let Ok(pipeline_component) = other.extract::<PyPipelineComponent>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*pipeline_component.get_task()).clone()
-            });
-            Ok(PyPipelineComponent::from_task_and_component(pipeline_component.get_component().clone(), task).into_py(py))
-        } else if let Ok(window) = other.extract::<PyWindow>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*window.get_task()).clone()
-            });
-            Ok(PyWindow::from_task_and_component(window.get_component().clone(), task).into_py(py))
-        } else if let Ok(filter) = other.extract::<PyFilter>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*filter.get_task()).clone()
-            });
-            Ok(PyFilter::from_task_and_component(filter.get_component().clone(), task).into_py(py))
-        } else {
-            Err(PyRuntimeError::new_err("Cannot connect: component must accept String input"))
-        }
+        
+        try_compose!(self, py, rt, other, PyPrinterSink);
+        try_compose!(self, py, rt, other, PyPipelineComponent);
+        try_compose!(self, py, rt, other, PyWindow);
+        try_compose!(self, py, rt, other, PyFilter);
+        
+        Err(PyRuntimeError::new_err("Cannot connect: component must accept String input"))
     }
 
     /**
@@ -70,18 +69,10 @@ pub trait PyPipelineWrapper<In: Send + 'static, Out: Send + 'static>: Clone + In
         Self::Component: PipelineComponent<Output = Vec<String>>,
     {
         let rt = pyo3_asyncio::tokio::get_runtime();
-        if let Ok(reduce) = other.extract::<PyReduce>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*reduce.get_task()).clone()
-            });
-            Ok(PyReduce::from_task_and_component(reduce.get_component().clone(), task).into_py(py))
-        } else if let Ok(map) = other.extract::<PyMap>(py) {
-            let task = rt.block_on(async {
-                (*self.get_task()).clone() | (*map.get_task()).clone()
-            });
-            Ok(PyMap::from_task_and_component(map.get_component().clone(), task).into_py(py))
-        } else {
-            Err(PyRuntimeError::new_err("Cannot connect: component must accept Vec<String> input"))
-        }
+        
+        try_compose!(self, py, rt, other, PyReduce);
+        try_compose!(self, py, rt, other, PyMap);
+        
+        Err(PyRuntimeError::new_err("Cannot connect: component must accept Vec<String> input"))
     }
 } 
