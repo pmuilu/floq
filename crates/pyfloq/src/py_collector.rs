@@ -29,7 +29,7 @@ impl PipelineComponent for CollectorComponent {
 }
 
 /// Python wrapper for Collector that stores items in a Python list
-#[pyclass]
+#[pyclass(name = "Collector")]
 #[derive(Clone)]
 pub struct PyCollector {
     #[allow(dead_code)]

@@ -5,7 +5,7 @@ use floq::pipeline::PipelineTask;
 use floq::functions::Map;
 
 /// Python wrapper for Map
-#[pyclass]
+#[pyclass(name = "Map")]
 #[derive(Clone)]
 pub struct PyMap {
     map: Map<Vec<String>, PyObject>,

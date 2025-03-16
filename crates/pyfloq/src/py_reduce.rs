@@ -6,7 +6,7 @@ use floq::functions::Reduce;
 use crate::py_collector::PyCollector;
 
 /// Python wrapper for Reduce
-#[pyclass]
+#[pyclass(name = "Reduce")]
 #[derive(Clone)]
 pub struct PyReduce {
     #[allow(dead_code)]

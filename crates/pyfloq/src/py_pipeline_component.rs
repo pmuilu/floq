@@ -33,7 +33,7 @@ impl PipelineComponent for RustPipelineComponent {
 }
 
 /// Python wrapper for a simple pipeline component
-#[pyclass]
+#[pyclass(name = "PipelineComponent")]
 #[derive(Clone)]
 pub struct PyPipelineComponent {
     #[allow(dead_code)]

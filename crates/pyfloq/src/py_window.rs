@@ -6,7 +6,7 @@ use floq::pipeline::PipelineTask;
 use floq::functions::Window;
 
 /// Python wrapper for Window
-#[pyclass]
+#[pyclass(name = "Window")]
 #[derive(Clone)]
 pub struct PyWindow {
     window: Window<String>,

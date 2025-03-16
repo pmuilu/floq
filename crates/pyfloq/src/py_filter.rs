@@ -6,7 +6,7 @@ use floq::pipeline::PipelineTask;
 use floq::functions::Filter;
 
 /// Python wrapper for Filter
-#[pyclass]
+#[pyclass(name = "Filter")]
 #[derive(Clone)]
 pub struct PyFilter {
     filter: Filter,

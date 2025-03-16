@@ -4,7 +4,7 @@ import pyfloq
 
 async def main():
     # Create a window to collect messages over time
-    window = pyfloq.PyWindow(5000)  # 5 second window
+    window = pyfloq.Window(5000)  # 5 second window
     
     # Create a reducer that counts words in the window
     def count_words(acc, messages):
@@ -20,10 +20,10 @@ async def main():
         return acc
     
     # Create the reduce component with initial value None and our reducer function
-    reducer = pyfloq.PyReduce(None, count_words)
+    reducer = pyfloq.Reduce(None, count_words)
     
     # Create source and collector
-    source = pyfloq.PyBlueskyFirehoseSource()
+    source = pyfloq.BlueskyFirehoseSource()
     
     # Collector callback that prints word counts
     def print_counts(counts):
@@ -34,13 +34,13 @@ async def main():
         else:
             print("\nNo counts in this window")
     
-    collector = pyfloq.PyCollector(print_counts)
+    collector = pyfloq.Collector(print_counts)
     
-    ai_filter = pyfloq.PyFilter(r"(Elon|Musk)")
+    filter = pyfloq.Filter(r"(Elon|Musk)")
 
     # Chain the tasks using the | operator:
     # source -> window -> reducer -> collector
-    task = source | ai_filter | window  | reducer | collector
+    task = source | filter | window | reducer | collector
     
     # Run the pipeline
     try:

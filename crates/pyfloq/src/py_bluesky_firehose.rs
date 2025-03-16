@@ -5,7 +5,7 @@ use floq::pipeline::{PipelineComponent, PipelineTask};
 use floq::sources::BlueskyFirehoseSource;
 
 /// Python wrapper for BlueskyFirehoseSource
-#[pyclass]
+#[pyclass(name = "BlueskyFirehoseSource")]
 #[derive(Clone)]
 pub struct PyBlueskyFirehoseSource {
     source: BlueskyFirehoseSource,
