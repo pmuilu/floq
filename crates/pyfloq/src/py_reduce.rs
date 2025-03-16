@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::sync::Arc;
 use crate::py_pipeline_wrapper::PyPipelineWrapper;
-use floq::pipeline::{PipelineComponent, PipelineTask};
+use floq::pipeline::PipelineTask;
 use floq::functions::Reduce;
 use crate::py_collector::PyCollector;
 
@@ -9,7 +9,9 @@ use crate::py_collector::PyCollector;
 #[pyclass]
 #[derive(Clone)]
 pub struct PyReduce {
+    #[allow(dead_code)]
     callback: PyObject,
+    #[allow(dead_code)]
     initial: PyObject,
     reduce: Reduce<Vec<String>, PyObject>,
     task: Arc<PipelineTask<Reduce<Vec<String>, PyObject>>>,

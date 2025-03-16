@@ -36,6 +36,7 @@ impl PipelineComponent for RustPipelineComponent {
 #[pyclass]
 #[derive(Clone)]
 pub struct PyPipelineComponent {
+    #[allow(dead_code)]
     callback: PyObject,
     component: RustPipelineComponent,
     task: Arc<PipelineTask<RustPipelineComponent>>,

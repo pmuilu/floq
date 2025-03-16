@@ -32,6 +32,7 @@ impl PipelineComponent for CollectorComponent {
 #[pyclass]
 #[derive(Clone)]
 pub struct PyCollector {
+    #[allow(dead_code)]
     callback: PyObject,
     component: CollectorComponent,
     task: Arc<PipelineTask<CollectorComponent>>,

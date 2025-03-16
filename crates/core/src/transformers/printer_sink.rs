@@ -1,7 +1,7 @@
 use crate::pipeline::{PipelineComponent, ComponentContext};
 use crate::pipeline::channel::{Sender, Receiver};
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::info;
 
 /// A sink component that prints each received message to stdout
 #[derive(Clone)]

@@ -1,5 +1,4 @@
 use super::channel::{Sender, Receiver};
-use super::pipeline_component::PipelineComponent;
 
 pub struct ComponentContext<Input, Output> {
     pub output_senders: Vec<Sender<Output>>,

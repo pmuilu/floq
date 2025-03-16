@@ -1,4 +1,4 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
+use crate::pipeline::{PipelineComponent, ComponentContext};
 use crate::pipeline::{Receiver, Sender};
 use std::sync::Arc;
 use std::marker::PhantomData;

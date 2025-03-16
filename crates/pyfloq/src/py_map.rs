@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::sync::Arc;
 use crate::py_pipeline_wrapper::PyPipelineWrapper;
-use floq::pipeline::{PipelineComponent, PipelineTask};
+use floq::pipeline::PipelineTask;
 use floq::functions::Map;
 
 /// Python wrapper for Map
