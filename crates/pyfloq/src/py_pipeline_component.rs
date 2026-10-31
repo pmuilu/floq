@@ -13,7 +13,7 @@ impl Operator for RustPipelineComponent {
     type Input = String;
     type Output = String;
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         while let Some(msg) = input.recv().await {
             let transformed = Python::with_gil(|py| {
                 match self.callback.call1(py, (msg.payload.as_str(),)) {

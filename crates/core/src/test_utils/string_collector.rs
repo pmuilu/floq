@@ -18,7 +18,7 @@ impl StringCollector {
 impl Sink for StringCollector {
     type Input = String;
 
-    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
         debug!("StringCollector starting");
         while let Some(msg) = input.recv().await {
             debug!("StringCollector received {}", msg.payload);

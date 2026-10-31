@@ -80,7 +80,7 @@ where
     type Input = T;
     type Output = T;
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("Filter starting");
 
         while let Some(msg) = input.recv().await {

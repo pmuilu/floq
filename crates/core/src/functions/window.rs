@@ -59,7 +59,7 @@ impl<T: Send + Sync + Clone + 'static> Operator for Window<T> {
     type Input = T;
     type Output = Vec<T>;
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("Window starting");
         let mut buffer: Vec<Message<T>> = Vec::new();
 

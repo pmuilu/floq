@@ -27,7 +27,7 @@ impl VectorDebugPrinter {
 impl Sink for VectorDebugPrinter {
     type Input = Vec<Vec<f32>>;
 
-    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
         debug!("VectorDebugPrinter starting");
         while let Some(msg) = input.recv().await {
             let vectors = msg.payload;

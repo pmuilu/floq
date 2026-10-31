@@ -13,7 +13,7 @@ pub struct CollectorComponent {
 impl Sink for CollectorComponent {
     type Input = PyObject;
 
-    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
         while let Some(msg) = input.recv().await {
             Python::with_gil(|py| {
                 if let Err(e) = self.callback.call1(py, (msg.payload,)) {

@@ -61,10 +61,7 @@ impl<C: PipelineComponent> StageRunner<C::Input, C::Output> for LeafStage<C> {
             }
         };
 
-        let context = Arc::new(ComponentContext {
-            output_senders: per_slot_outputs,
-            input_receivers: inputs.clone(),
-        });
+        let context = Arc::new(ComponentContext::new(per_slot_outputs, inputs.len()));
 
         for (index, input_rx) in inputs.into_iter().enumerate() {
             let component = Arc::clone(&self.component);
@@ -302,6 +299,7 @@ where
 
     /// Registers this stage's telemetry metrics with a [`PipelineMonitor`].
     pub fn register_with_monitor(&self, monitor: &mut PipelineMonitor) {
+        self.metrics.enable();
         monitor.register_monitor(Arc::clone(&self.metrics));
     }
 

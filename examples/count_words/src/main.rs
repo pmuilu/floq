@@ -21,7 +21,7 @@ impl HashMapPrinterSink {
 impl Sink for HashMapPrinterSink {
     type Input = HashMap<String, usize>;
 
-    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
         debug!("HashMapPrinterSink starting");
         while let Some(msg) = input.recv().await {
             info!("Word counts in last window:");

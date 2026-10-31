@@ -44,7 +44,7 @@ impl PyPipelineWrapper<Vec<String>, PyObject> for PyMap {
 impl PyMap {
     #[new]
     fn new(callback: PyObject) -> Self {
-        let map = Map::new(move |items: Vec<String>| {
+        let map = Map::new_boxed(move |items: Vec<String>| {
             Python::with_gil(|py| match callback.call1(py, (items,)) {
                 Ok(result) => result,
                 Err(e) => {

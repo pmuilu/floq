@@ -34,7 +34,7 @@ impl<T: Send + 'static> Operator for RoundRobinSplitter<T> {
     type Input = T;
     type Output = T;
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("RoundRobinSplitter starting");
         let slot_count = output.slot_count().max(1);
         debug!("Number of downstream slots: {}", slot_count);

@@ -18,7 +18,7 @@ impl NumberCollector {
 impl Sink for NumberCollector {
     type Input = i32;
 
-    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
         debug!("NumberCollector starting");
         while let Some(msg) = input.recv().await {
             let num = msg.payload;

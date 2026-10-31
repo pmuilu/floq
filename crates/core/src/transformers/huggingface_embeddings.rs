@@ -67,7 +67,7 @@ impl Operator for HuggingfaceEmbeddings {
     type Input = String;
     type Output = Vec<f32>;
 
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("HuggingfaceEmbeddings starting");
 
         while let Some(msg) = input.recv().await {

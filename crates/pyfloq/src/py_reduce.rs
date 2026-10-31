@@ -53,7 +53,7 @@ impl PyReduce {
                 });
             };
 
-            let reduce = Reduce::new(initial.clone_ref(py), reducer);
+            let reduce = Reduce::new_boxed(initial.clone_ref(py), reducer);
             Self {
                 reduce: reduce.clone(),
                 stage: PipelineTask::new(reduce),
