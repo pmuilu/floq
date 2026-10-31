@@ -4,7 +4,7 @@ import pyfloq
 
 async def main():
     # Create a window to collect messages over time
-    window = pyfloq.PyWindow(5000)  # 5 second window
+    window = pyfloq.Window(5000)  # 5 second window
     
     # Create a map function that processes batches of messages
     def process_batch(messages):
@@ -25,10 +25,10 @@ async def main():
         return stats
     
     # Create the map component with our processing function
-    mapper = pyfloq.PyMap(process_batch)
+    mapper = pyfloq.Map(process_batch)
     
     # Create source and collector
-    source = pyfloq.PyBlueskyFirehoseSource()
+    source = pyfloq.BlueskyFirehoseSource()
     
     # Collector callback that prints statistics
     def print_stats(stats):
@@ -39,7 +39,7 @@ async def main():
         else:
             print("\nNo messages in this batch")
     
-    collector = pyfloq.PyCollector(print_stats)
+    collector = pyfloq.Collector(print_stats)
     
     # Chain the tasks using the | operator:
     # source -> window -> mapper -> collector
