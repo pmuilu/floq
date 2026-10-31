@@ -5,7 +5,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{debug, error};
 
-const GEMINI_EMBEDDING_MODEL: &str = "models/text-embedding-004";
+const DEFAULT_GEMINI_EMBEDDING_MODEL: &str = "models/gemini-embedding-001";
+const MAX_BATCH_SIZE: usize = 100;
 
 #[derive(Deserialize)]
 struct BatchEmbedResponse {
@@ -22,6 +23,7 @@ struct EmbeddingValues {
 pub struct GeminiEmbeddings {
     client: reqwest::Client,
     api_key: String,
+    model: String,
 }
 
 impl Default for GeminiEmbeddings {
@@ -48,16 +50,34 @@ impl GeminiEmbeddings {
         Self {
             client: reqwest::Client::new(),
             api_key: api_key.into(),
+            model: DEFAULT_GEMINI_EMBEDDING_MODEL.to_string(),
         }
+    }
+
+    /// Overrides the Gemini embedding model (defaults to `"models/gemini-embedding-001"`).
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        let m = model.into();
+        self.model = if m.starts_with("models/") {
+            m
+        } else {
+            format!("models/{}", m)
+        };
+        self
     }
 
     async fn get_embeddings(&self, body: &Value) -> Result<Vec<Vec<f32>>> {
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}:batchEmbedContents?key={}",
-            GEMINI_EMBEDDING_MODEL, self.api_key
+            "https://generativelanguage.googleapis.com/v1beta/{}:batchEmbedContents",
+            self.model
         );
 
-        let response = self.client.post(&url).json(body).send().await?;
+        let response = self
+            .client
+            .post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .json(body)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -82,28 +102,36 @@ impl Operator for GeminiEmbeddings {
         while let Some(msg) = input.recv().await {
             debug!("Processing {} texts for embeddings", msg.payload.len());
 
-            let requests: Vec<_> = msg
-                .payload
-                .iter()
-                .map(|t| {
-                    json!({
-                        "model": GEMINI_EMBEDDING_MODEL,
-                        "content": {
-                            "parts": [{ "text": t }]
-                        }
+            let mut all_embeddings = Vec::with_capacity(msg.payload.len());
+            let mut batch_failed = false;
+
+            for chunk in msg.payload.chunks(MAX_BATCH_SIZE) {
+                let requests: Vec<_> = chunk
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "model": &self.model,
+                            "content": {
+                                "parts": [{ "text": t }]
+                            }
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            let body = json!({ "requests": requests });
+                let body = json!({ "requests": requests });
 
-            match self.get_embeddings(&body).await {
-                Ok(embeddings) => {
-                    output.send(msg.with_new_payload(embeddings)).await?;
+                match self.get_embeddings(&body).await {
+                    Ok(embeddings) => all_embeddings.extend(embeddings),
+                    Err(e) => {
+                        error!("Failed to get embeddings: {}", e);
+                        batch_failed = true;
+                        break;
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to get embeddings: {}", e);
-                }
+            }
+
+            if !batch_failed && !all_embeddings.is_empty() {
+                output.send(msg.with_new_payload(all_embeddings)).await?;
             }
         }
 
