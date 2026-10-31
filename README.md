@@ -4,11 +4,11 @@ Floq is a fast, single-node, data-parallel streaming framework for Rust (with Py
 
 ## Key Features
 
-- **Declarative Pipe Syntax (`|`)**: Compose sources, operators, and sinks lazily (`source | filter | window | map | sink`). Channels and Tokio tasks are only materialized when `.run().await` or `.run_until_ctrl_c().await` is called.
+- **Declarative Pipe Syntax (`|`)**: Compose sources, operators, and sinks lazily (`source | filter | window | map | sink`). Channels and Tokio tasks are only materialized when `.run().await` is called.
 - **Bounded Async Backpressure & Lock-Free Receivers**: Built on bounded `tokio::sync::mpsc` channels with exclusive per-slot receivers and zero-copy payload movement.
 - **Data-Parallel Slots & Keyed Partitioning**: Scale any stage across parallel workers with `.with_slots(n)` (automatic round-robin fan-out and fan-in) or route stateful streams deterministically with `KeyBy`.
 - **Flexible Windowing**: Count windows, tumbling time windows, sliding windows, and hybrid **count-or-duration** windows (`Window::with_count_or_duration`) ideal for batch-limited LLM and embedding APIs.
-- **Graceful Shutdown & Auto-Reconnecting Sources**: Built-in `Ctrl-C` / custom signal draining that stops upstream sources while flushing in-flight windows and downstream sinks, plus exponential-backoff WebSocket reconnection (with sequence cursor resumption on Bluesky's ATProto firehose).
+- **Auto-Reconnecting Sources**: Exponential-backoff WebSocket reconnection (with sequence cursor resumption on Bluesky's ATProto firehose).
 - **Batteries-Included Connectors (Feature-Gated)**:
   - **Sources**: `BlueskyFirehoseSource`, `MastodonFirehoseSource`, `WebSocketSource`, `WebSocketMqttSource`, `FileSource`
   - **Transformers & Sinks**: `GeminiEmbeddings` (`models/gemini-embedding-001`), `HuggingfaceEmbeddings`, `ChannelSink`, `WebhookSink`, `PrinterSink`
@@ -48,9 +48,9 @@ async fn main() -> Result<()> {
     .into_task();
     let sink = PrinterSink::new("[embeddings] ").into_task();
 
-    // Wire the pipeline declaratively and run until Ctrl-C (draining in-flight batches on exit)
+    // Wire the pipeline declaratively and run
     let pipeline: PipelineTask<(), ()> = source | filter | window | embed | summarize | sink;
-    pipeline.run_until_ctrl_c().await
+    pipeline.run().await
 }
 ```
 

@@ -74,11 +74,11 @@ async fn main() -> Result<()> {
 
     let sink = PipelineTask::new(HashMapPrinterSink::new());
 
-    info!("Starting pipeline (press Ctrl-C to drain and exit)...");
+    info!("Starting pipeline...");
 
     let pipeline = source | window | reducer | sink;
 
-    pipeline.run_until_ctrl_c().await?;
+    pipeline.run().await?;
 
     info!("Pipeline completed");
     Ok(())

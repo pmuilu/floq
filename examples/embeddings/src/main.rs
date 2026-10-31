@@ -81,12 +81,12 @@ async fn main() -> Result<()> {
     merger.register_with_monitor(&mut monitor);
     sink.register_with_monitor(&mut monitor);
 
-    info!("Starting pipeline (press Ctrl-C to drain and exit)...");
+    info!("Starting pipeline...");
     let pipeline =
         source | html_stripper | splitter | window | gemini_embeddings | merger | sink;
 
     monitor.start();
-    pipeline.run_until_ctrl_c().await?;
+    pipeline.run().await?;
     info!("Pipeline completed");
     Ok(())
 }
