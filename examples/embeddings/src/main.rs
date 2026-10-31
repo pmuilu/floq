@@ -65,7 +65,10 @@ async fn main() -> Result<()> {
     let source = PipelineTask::new(BlueskyFirehoseSource::new());
     let html_stripper = PipelineTask::new(Map::new(strip_html));
     let splitter = PipelineTask::new(RoundRobinSplitter::new());
-    let window = PipelineTask::with_slots(Window::with_duration(Duration::from_secs(3)), slots);
+    let window = PipelineTask::with_slots(
+        Window::with_count_or_duration(100, Duration::from_secs(3)),
+        slots,
+    );
     let gemini_embeddings = PipelineTask::with_slots(GeminiEmbeddings::new(), slots);
     let merger = PipelineTask::with_slots(Merger::new(), slots);
     let sink = PipelineTask::new(VectorDebugPrinter::new());
@@ -78,12 +81,12 @@ async fn main() -> Result<()> {
     merger.register_with_monitor(&mut monitor);
     sink.register_with_monitor(&mut monitor);
 
-    info!("Starting pipeline...");
+    info!("Starting pipeline (press Ctrl-C to drain and exit)...");
     let pipeline =
         source | html_stripper | splitter | window | gemini_embeddings | merger | sink;
 
     monitor.start();
-    pipeline.run().await?;
+    pipeline.run_until_ctrl_c().await?;
     info!("Pipeline completed");
     Ok(())
 }

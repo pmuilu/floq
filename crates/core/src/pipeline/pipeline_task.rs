@@ -5,10 +5,12 @@ use super::component_context::ComponentContext;
 use super::pipeline_component::{Operator, PipelineComponent, Sink, Source};
 use super::pipeline_monitor::{MonitoredTask, PipelineMonitor};
 use crate::error::{Error, Result};
+use std::future::Future;
 use std::ops::BitOr;
 use std::sync::Arc;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 /// Internal trait for lazy pipeline execution nodes.
 ///
@@ -22,6 +24,7 @@ trait StageRunner<In, Out>: Send + Sync {
         &self,
         inputs: Vec<Receiver<In>>,
         output: Sender<Out>,
+        shutdown: Option<watch::Receiver<bool>>,
     ) -> Vec<JoinHandle<Result<()>>>;
 }
 
@@ -50,6 +53,7 @@ impl<C: PipelineComponent> StageRunner<C::Input, C::Output> for LeafStage<C> {
         &self,
         inputs: Vec<Receiver<C::Input>>,
         output: Sender<C::Output>,
+        shutdown: Option<watch::Receiver<bool>>,
     ) -> Vec<JoinHandle<Result<()>>> {
         let mut handles = Vec::with_capacity(self.slots + self.combined_sources.len());
         let per_slot_outputs = {
@@ -67,10 +71,22 @@ impl<C: PipelineComponent> StageRunner<C::Input, C::Output> for LeafStage<C> {
             let component = Arc::clone(&self.component);
             let ctx = Arc::clone(&context);
             let out_tx = output.clone();
+            let shutdown_rx = shutdown.clone();
 
             let handle = tokio::spawn(async move {
                 debug!("Starting pipeline slot {}", index);
-                let res = component.run(input_rx, out_tx, ctx).await;
+                let res = if let Some(mut rx) = shutdown_rx {
+                    tokio::select! {
+                        biased;
+                        _ = rx.changed() => {
+                            debug!("Pipeline slot {} received shutdown signal", index);
+                            Ok(())
+                        }
+                        r = component.run(input_rx, out_tx, ctx) => r,
+                    }
+                } else {
+                    component.run(input_rx, out_tx, ctx).await
+                };
                 debug!("Pipeline slot {} completed", index);
                 res
             });
@@ -84,7 +100,11 @@ impl<C: PipelineComponent> StageRunner<C::Input, C::Output> for LeafStage<C> {
                 combined.runner.entry_metrics(),
             );
             dummy_senders.clear();
-            handles.extend(combined.runner.spawn(combined_inputs, output.clone()));
+            handles.extend(combined.runner.spawn(
+                combined_inputs,
+                output.clone(),
+                shutdown.clone(),
+            ));
         }
 
         handles
@@ -118,6 +138,7 @@ where
         &self,
         inputs: Vec<Receiver<In>>,
         final_output: Sender<Out>,
+        shutdown: Option<watch::Receiver<bool>>,
     ) -> Vec<JoinHandle<Result<()>>> {
         let mid_slots = self.right.entry_slots();
         let mid_capacity = self.right.entry_capacity();
@@ -127,8 +148,9 @@ where
             multi_slot_channel::<Mid>(mid_slots, mid_capacity, mid_metrics);
         let mid_sender = mid_senders.swap_remove(0);
 
-        let mut handles = self.left.spawn(inputs, mid_sender);
-        handles.extend(self.right.spawn(mid_receivers, final_output));
+        // Pass `shutdown` only to `left` (root sources); `right` drains naturally once `left` drops `mid_sender`.
+        let mut handles = self.left.spawn(inputs, mid_sender, shutdown);
+        handles.extend(self.right.spawn(mid_receivers, final_output, None));
         handles
     }
 }
@@ -272,8 +294,9 @@ where
                 &self,
                 inputs: Vec<Receiver<In>>,
                 output: Sender<Out>,
+                shutdown: Option<watch::Receiver<bool>>,
             ) -> Vec<JoinHandle<Result<()>>> {
-                let mut handles = self.primary.spawn(inputs, output.clone());
+                let mut handles = self.primary.spawn(inputs, output.clone(), shutdown.clone());
                 for src in &self.others {
                     let (mut dummy_senders, src_inputs) = multi_slot_channel(
                         src.runner.entry_slots(),
@@ -281,7 +304,11 @@ where
                         src.runner.entry_metrics(),
                     );
                     dummy_senders.clear();
-                    handles.extend(src.runner.spawn(src_inputs, output.clone()));
+                    handles.extend(src.runner.spawn(
+                        src_inputs,
+                        output.clone(),
+                        shutdown.clone(),
+                    ));
                 }
                 handles
             }
@@ -306,15 +333,48 @@ where
     /// Materializes all channels, spawns all stage tasks onto the Tokio runtime,
     /// and awaits pipeline completion.
     pub async fn run(&self) -> Result<()> {
+        self.execute(None).await
+    }
+
+    /// Runs the pipeline until completion or until `shutdown` resolves.
+    ///
+    /// When `shutdown` resolves, root source stages stop ingesting and drop their output senders,
+    /// allowing all downstream windows, operators, and sinks to drain and flush in-flight messages
+    /// before returning.
+    pub async fn run_with_shutdown<F>(&self, shutdown: F) -> Result<()>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let (tx, rx) = watch::channel(false);
+        let trigger = tokio::spawn(async move {
+            shutdown.await;
+            let _ = tx.send(true);
+        });
+        let result = self.execute(Some(rx)).await;
+        trigger.abort();
+        result
+    }
+
+    /// Runs the pipeline until completion or `Ctrl-C` (`SIGINT`), gracefully draining all
+    /// buffered windows and downstream stages before exiting.
+    pub async fn run_until_ctrl_c(&self) -> Result<()> {
+        self.run_with_shutdown(async {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                info!("Received Ctrl-C, draining pipeline...");
+            }
+        })
+        .await
+    }
+
+    async fn execute(&self, shutdown: Option<watch::Receiver<bool>>) -> Result<()> {
         let (mut root_senders, root_receivers) = multi_slot_channel::<In>(
             self.runner.entry_slots(),
             self.runner.entry_capacity(),
             self.runner.entry_metrics(),
         );
-        // Drop root senders immediately so source stages see an closed dummy input channel.
         root_senders.clear();
 
-        let handles = self.runner.spawn(root_receivers, Sender::null());
+        let handles = self.runner.spawn(root_receivers, Sender::null(), shutdown);
         let mut first_error: Option<Error> = None;
 
         for handle in handles {
@@ -327,7 +387,7 @@ where
                     }
                 }
                 Err(join_err) => {
-                    error!("Pipeline task panicked or was cancelled: {}", join_err);
+                    error!("Pipeline task panicked or cancelled: {}", join_err);
                     if first_error.is_none() {
                         first_error = Some(Error::TaskJoin(join_err));
                     }

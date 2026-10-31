@@ -8,6 +8,7 @@ use tracing::{debug, error};
 
 #[derive(Debug)]
 pub(crate) struct FirehoseMessage {
+    pub(crate) seq: Option<i64>,
     ops: Vec<Operation>,
     blocks: Vec<u8>,
 }
@@ -37,10 +38,14 @@ impl FirehoseMessage {
             _ => return None,
         };
 
+        let seq = match map_get(&entries, "seq") {
+            Some(Value::Integer(i)) => i128::from(*i).try_into().ok(),
+            _ => None,
+        };
         let ops = Self::extract_ops(&entries)?;
         let blocks = Self::extract_blocks(&entries)?;
 
-        Some(Self { ops, blocks })
+        Some(Self { seq, ops, blocks })
     }
 
     fn extract_ops(entries: &[(Value, Value)]) -> Option<Vec<Operation>> {

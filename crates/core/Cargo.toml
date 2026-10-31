@@ -3,21 +3,40 @@ name = "floq"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["full"]
+full = [
+    "bluesky",
+    "mastodon",
+    "websocket",
+    "mqtt",
+    "gemini",
+    "huggingface",
+    "webhook",
+]
+websocket = ["dep:tokio-tungstenite"]
+bluesky = ["websocket", "dep:ciborium", "dep:rs-car", "dep:chrono"]
+mastodon = ["websocket", "dep:chrono"]
+mqtt = ["dep:rumqttc"]
+gemini = ["dep:reqwest"]
+huggingface = ["dep:reqwest"]
+webhook = ["dep:reqwest"]
+
 [dependencies]
 bytes.workspace = true
-chrono.workspace = true
-ciborium.workspace = true
+chrono = { workspace = true, optional = true }
+ciborium = { workspace = true, optional = true }
 futures.workspace = true
 rand.workspace = true
 regex.workspace = true
-reqwest.workspace = true
-rs-car.workspace = true
-rumqttc.workspace = true
+reqwest = { workspace = true, optional = true }
+rs-car = { workspace = true, optional = true }
+rumqttc = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true

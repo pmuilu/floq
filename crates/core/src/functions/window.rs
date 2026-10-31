@@ -10,13 +10,19 @@ use tracing::debug;
 pub enum WindowCondition {
     Count(usize),
     Time(Duration),
+    /// Flushes whenever `max_count` items accumulate OR `max_duration` elapses, whichever comes first.
+    CountOrTime {
+        max_count: usize,
+        max_duration: Duration,
+    },
     Sliding {
         window_size: Duration,
         slide_interval: Duration,
     },
 }
 
-/// Windowing operator supporting count-based, tumbling time-based, and sliding time windows.
+/// Windowing operator supporting count-based, tumbling time-based, hybrid count-or-time,
+/// and sliding time windows.
 #[derive(Clone, Debug)]
 pub struct Window<T> {
     condition: WindowCondition,
@@ -44,6 +50,18 @@ impl<T> Window<T> {
         }
     }
 
+    /// Creates a hybrid micro-batch window that flushes as soon as `max_count` items accumulate
+    /// or `max_duration` elapses since the last flush (ideal for rate/batch-limited AI APIs).
+    pub fn with_count_or_duration(max_count: usize, max_duration: Duration) -> Self {
+        Self {
+            condition: WindowCondition::CountOrTime {
+                max_count: max_count.max(1),
+                max_duration,
+            },
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn with_sliding_window(window_size: Duration, slide_interval: Duration) -> Self {
         Self {
             condition: WindowCondition::Sliding {
@@ -59,7 +77,11 @@ impl<T: Send + Sync + Clone + 'static> Operator for Window<T> {
     type Input = T;
     type Output = Vec<T>;
 
-    async fn run(&self, mut input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+    async fn run(
+        &self,
+        mut input: Receiver<Self::Input>,
+        output: Sender<Self::Output>,
+    ) -> Result<()> {
         debug!("Window starting");
         let mut buffer: Vec<Message<T>> = Vec::new();
 
@@ -86,6 +108,41 @@ impl<T: Send + Sync + Clone + 'static> Operator for Window<T> {
                         maybe_msg = input.recv() => {
                             match maybe_msg {
                                 Some(msg) => buffer.push(msg),
+                                None => break,
+                            }
+                        }
+                        _ = ticker.tick() => {
+                            if !buffer.is_empty() {
+                                let items: Vec<T> = buffer.drain(..).map(|m| m.payload).collect();
+                                output.send(Message::new(items)).await?;
+                            }
+                        }
+                    }
+                }
+            }
+            WindowCondition::CountOrTime {
+                max_count,
+                max_duration,
+            } => {
+                let period = if max_duration.is_zero() {
+                    Duration::from_millis(1)
+                } else {
+                    max_duration
+                };
+                let mut ticker = interval_at(Instant::now() + period, period);
+                loop {
+                    tokio::select! {
+                        biased;
+                        maybe_msg = input.recv() => {
+                            match maybe_msg {
+                                Some(msg) => {
+                                    buffer.push(msg);
+                                    if buffer.len() >= max_count {
+                                        let items: Vec<T> = buffer.drain(..).map(|m| m.payload).collect();
+                                        output.send(Message::new(items)).await?;
+                                        ticker.reset();
+                                    }
+                                }
                                 None => break,
                             }
                         }

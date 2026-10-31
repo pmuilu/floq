@@ -53,6 +53,27 @@ impl PyWindow {
         }
     }
 
+    #[staticmethod]
+    fn with_count(count: usize) -> Self {
+        let window = Window::with_count(count);
+        Self {
+            window: window.clone(),
+            stage: PipelineTask::new(window),
+            rooted: None,
+        }
+    }
+
+    #[staticmethod]
+    fn with_count_or_duration(max_count: usize, duration_ms: u64) -> Self {
+        let window =
+            Window::with_count_or_duration(max_count, Duration::from_millis(duration_ms));
+        Self {
+            window: window.clone(),
+            stage: PipelineTask::new(window),
+            rooted: None,
+        }
+    }
+
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| self.compose_vec_string(py, &other))
     }

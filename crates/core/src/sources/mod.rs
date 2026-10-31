@@ -1,12 +1,21 @@
+#[cfg(feature = "bluesky")]
 pub mod bluesky;
-pub mod mastodon;
-pub mod websocket;
-pub mod websocket_mqtt;
 pub mod file_source;
+#[cfg(feature = "mastodon")]
+pub mod mastodon;
+#[cfg(feature = "mqtt")]
+pub mod websocket_mqtt;
+#[cfg(feature = "websocket")]
+pub mod websocket;
+pub mod reconnect;
 
-// Re-export the source types
+#[cfg(feature = "bluesky")]
 pub use bluesky::bluesky_firehose_source::BlueskyFirehoseSource;
-pub use mastodon::mastodon_firehose_source::MastodonFirehoseSource;
-pub use websocket::WebSocketSource;
-pub use websocket_mqtt::WebSocketMqttSource;
 pub use file_source::FileSource;
+#[cfg(feature = "mastodon")]
+pub use mastodon::mastodon_firehose_source::MastodonFirehoseSource;
+pub use reconnect::ReconnectPolicy;
+#[cfg(feature = "websocket")]
+pub use websocket::WebSocketSource;
+#[cfg(feature = "mqtt")]
+pub use websocket_mqtt::WebSocketMqttSource;

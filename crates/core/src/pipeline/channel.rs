@@ -197,6 +197,12 @@ impl<T> Sender<T> {
         self.slots.len()
     }
 
+    /// Returns `true` if all downstream slot receivers have been dropped.
+    #[inline]
+    pub fn is_closed(&self) -> bool {
+        !self.slots.is_empty() && self.slots.iter().all(|s| s.is_closed())
+    }
+
     /// Returns the current number of buffered messages across all downstream slot queues.
     pub fn len(&self) -> usize {
         self.slots
