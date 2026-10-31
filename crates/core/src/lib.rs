@@ -1,6 +1,9 @@
-pub mod pipeline;
-pub mod test_utils; 
-pub mod sources;
-pub mod transformers;
-pub mod slots;
+pub mod error;
 pub mod functions;
+pub mod pipeline;
+pub mod slots;
+pub mod sources;
+pub mod test_utils;
+pub mod transformers;
+
+pub use error::{Error, Result};

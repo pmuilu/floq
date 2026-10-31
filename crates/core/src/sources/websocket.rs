@@ -1,50 +1,39 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Sender, Receiver};
-use std::sync::Arc;
+use crate::error::Result;
+use crate::impl_source_component;
+use crate::pipeline::{Message, Sender, Source};
+use futures::StreamExt;
 use tokio_tungstenite::connect_async;
-use futures_util::StreamExt;
 use tracing::{debug, error};
 use url::Url;
 
+/// A pipeline source that reads text frames from a WebSocket endpoint.
+#[derive(Clone, Debug)]
 pub struct WebSocketSource {
     url: String,
 }
 
-impl WebSocketSource {
-    pub fn new(url: String) -> Self {
-        WebSocketSource { url }
+impl Default for WebSocketSource {
+    fn default() -> Self {
+        Self {
+            url: "ws://localhost:8080".to_string(),
+        }
     }
 }
 
-impl PipelineComponent for WebSocketSource {
-    type Input = ();
+impl WebSocketSource {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self { url: url.into() }
+    }
+}
+
+impl Source for WebSocketSource {
     type Output = String;
 
-    fn new() -> Self {
-        WebSocketSource { 
-            url: "ws://localhost:8080".to_string() 
-        }
-    }
-
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
         debug!("WebSocketSource starting");
 
-        let url = match Url::parse(&self.url) {
-            Ok(url) => url,
-            Err(e) => {
-                error!("Failed to parse URL: {}", e);
-                return;
-            }
-        };
-
-        let (ws_stream, _) = match connect_async(url).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                error!("Failed to connect to WebSocket: {}", e);
-                return;
-            }
-        };
-
+        let url = Url::parse(&self.url)?;
+        let (ws_stream, _) = connect_async(url).await?;
         let (_, mut read) = ws_stream.split();
 
         debug!("WebSocket connection established");
@@ -53,19 +42,21 @@ impl PipelineComponent for WebSocketSource {
             match message {
                 Ok(msg) => {
                     if let Ok(text) = msg.to_text() {
-                        if let Err(e) = output.send(Message::new(text.to_string())) {
-                            error!("Failed to send message to output: {}", e);
+                        if output.send(Message::new(text.to_owned())).await.is_err() {
                             break;
                         }
                     }
                 }
                 Err(e) => {
                     error!("WebSocket error: {}", e);
-                    break;
+                    return Err(e.into());
                 }
             }
         }
 
         debug!("WebSocketSource completed");
+        Ok(())
     }
 }
+
+impl_source_component!(WebSocketSource, String);

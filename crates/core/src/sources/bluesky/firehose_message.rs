@@ -1,14 +1,11 @@
-use serde_cbor::Value;
-use std::collections::BTreeMap;
-use crate::pipeline::channel::Sender;
-use crate::pipeline::Message;
-use tracing::{debug, error};
+use crate::error::Result;
+use crate::pipeline::{Message, Sender};
+use ciborium::value::Value;
 use futures::stream::StreamExt;
 use rs_car::CarReader;
-use serde::Deserialize;
+use std::io::Cursor;
+use tracing::{debug, error};
 
-
-// Types for CBOR structure
 #[derive(Debug)]
 pub(crate) struct FirehoseMessage {
     ops: Vec<Operation>,
@@ -20,41 +17,44 @@ struct Operation {
     action: String,
 }
 
+fn map_get<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries.iter().find_map(|(k, v)| match k {
+        Value::Text(s) if s == key => Some(v),
+        _ => None,
+    })
+}
+
 impl FirehoseMessage {
     pub(crate) fn from_cbor(bytes: &[u8]) -> Option<Self> {
-        let mut decoder = serde_cbor::Deserializer::from_slice(bytes);
-        
-        // Skip first value
-        let _ = Value::deserialize(&mut decoder).ok()?;
-        
-        // Get second value which contains our data
-        let value = Value::deserialize(&mut decoder).ok()?;
-        let map = match value {
+        let mut cursor = Cursor::new(bytes);
+
+        // First CBOR item is the frame header; second is the commit payload map.
+        let _header: Value = ciborium::de::from_reader(&mut cursor).ok()?;
+        let body: Value = ciborium::de::from_reader(&mut cursor).ok()?;
+
+        let entries = match body {
             Value::Map(m) => m,
             _ => return None,
         };
 
-        // Extract ops
-        let ops = Self::extract_ops(&map)?;
-        let blocks = Self::extract_blocks(&map)?;
+        let ops = Self::extract_ops(&entries)?;
+        let blocks = Self::extract_blocks(&entries)?;
 
-        Some(FirehoseMessage { ops, blocks })
+        Some(Self { ops, blocks })
     }
 
-    fn extract_ops(map: &BTreeMap<Value, Value>) -> Option<Vec<Operation>> {
-        let ops = map.get(&Value::Text("ops".to_string()))?;
-        let arr = match ops {
+    fn extract_ops(entries: &[(Value, Value)]) -> Option<Vec<Operation>> {
+        let arr = match map_get(entries, "ops")? {
             Value::Array(arr) => arr,
             _ => return None,
         };
 
-        let first_op = arr.first()?;
-        let op_map = match first_op {
+        let first_op = match arr.first()? {
             Value::Map(m) => m,
             _ => return None,
         };
 
-        let action = match op_map.get(&Value::Text("action".to_string()))? {
+        let action = match map_get(first_op, "action")? {
             Value::Text(action) => action.clone(),
             _ => return None,
         };
@@ -62,16 +62,17 @@ impl FirehoseMessage {
         Some(vec![Operation { action }])
     }
 
-    fn extract_blocks(map: &BTreeMap<Value, Value>) -> Option<Vec<u8>> {
-        match map.get(&Value::Text("blocks".to_string()))? {
+    fn extract_blocks(entries: &[(Value, Value)]) -> Option<Vec<u8>> {
+        match map_get(entries, "blocks")? {
             Value::Bytes(blocks) => Some(blocks.clone()),
             _ => None,
         }
     }
 
-    pub(crate) async fn process_blocks(&self, output: &Sender<String>) -> Result<(), Box<dyn std::error::Error>> {
-        let first_op = self.ops.first()
-            .ok_or("No operations found")?;
+    pub(crate) async fn process_blocks(&self, output: &Sender<String>) -> Result<()> {
+        let Some(first_op) = self.ops.first() else {
+            return Ok(());
+        };
 
         debug!("Processing blocks with action: {}", first_op.action);
 
@@ -84,30 +85,36 @@ impl FirehoseMessage {
 
         while let Some(item) = car_reader.next().await {
             if let Ok((_cid, block)) = item {
-                Self::process_block(&block, output);
+                Self::process_block(&block, output).await;
             }
         }
 
         Ok(())
     }
 
-    fn process_block(block: &[u8], output: &Sender<String>) {
-        if let Ok(Value::Map(map)) = serde_cbor::from_slice::<Value>(block) {
-            if let Some(Value::Text(type_str)) = map.get(&Value::Text("$type".to_string())) {
-                if type_str == "app.bsky.feed.post" {
-                    debug!("Found a post!");
-                    if let (Some(Value::Text(text)), Some(Value::Text(created_at))) = (
-                        map.get(&Value::Text("text".to_string())),
-                        map.get(&Value::Text("createdAt".to_string()))
-                    ) {
-                        if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(created_at) {
-                            let unix_ms = timestamp.timestamp_millis() as u64;
-                            if let Err(e) = output.send(Message::with_event_time(text.clone(), unix_ms)) {
-                                error!("Failed to send text to channel: {:?}", e);
-                            } else {
-                                debug!("Successfully sent post to channel");
-                            }
-                        }
+    async fn process_block(block: &[u8], output: &Sender<String>) {
+        let Ok(Value::Map(entries)) = ciborium::de::from_reader::<Value, _>(block) else {
+            return;
+        };
+
+        let Some(Value::Text(type_str)) = map_get(&entries, "$type") else {
+            return;
+        };
+
+        if type_str == "app.bsky.feed.post" {
+            debug!("Found a Bluesky post");
+            if let (Some(Value::Text(text)), Some(Value::Text(created_at))) =
+                (map_get(&entries, "text"), map_get(&entries, "createdAt"))
+            {
+                if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(created_at) {
+                    let unix_ms = timestamp.timestamp_millis().max(0) as u64;
+                    if let Err(e) = output
+                        .send(Message::with_event_time(text.clone(), unix_ms))
+                        .await
+                    {
+                        error!("Failed to send text to channel: {}", e);
+                    } else {
+                        debug!("Successfully sent post to channel");
                     }
                 }
             }

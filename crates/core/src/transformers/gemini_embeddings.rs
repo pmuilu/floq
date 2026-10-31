@@ -1,98 +1,115 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-use tracing::{debug, error};
+use crate::error::{Error, Result};
+use crate::impl_operator_component;
+use crate::pipeline::{Operator, Receiver, Sender};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use tracing::{debug, error};
 
+const GEMINI_EMBEDDING_MODEL: &str = "models/text-embedding-004";
 
+#[derive(Deserialize)]
+struct BatchEmbedResponse {
+    embeddings: Vec<EmbeddingValues>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingValues {
+    values: Vec<f32>,
+}
+
+/// Operator that computes batched text embeddings via the Google Gemini API.
+#[derive(Clone, Debug)]
 pub struct GeminiEmbeddings {
     client: reqwest::Client,
     api_key: String,
 }
 
-impl PipelineComponent for GeminiEmbeddings {
-    type Input = Vec<String>;
-    type Output = Vec<Vec<f32>>;
-
-    fn new() -> Self {
-        GeminiEmbeddings {
-            client: reqwest::Client::new(),
-            api_key: std::env::var("GEMINI_API_KEY")
-                .expect("GEMINI_API_KEY environment variable not set"),
-        }
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        debug!("GeminiEmbeddings starting");
-        while let Ok(msg) = input.recv() {
-            let texts = msg.payload.clone();
-            debug!("Processing {} texts for embeddings", texts.len());
-            
-            // Create individual requests for each text
-            let requests = texts.iter().map(|t| json!({
-                "model": "models/text-embedding-004",
-                "content": {
-                    "parts": [{
-                        "text": t
-                    }]
-                }
-            })).collect::<Vec<_>>();
-
-            // Batch them in a single request
-            let body = json!({
-                "requests": requests
-            });
-
-            match self.get_embeddings(body).await {
-                Ok(embeddings) => {
-                    if let Err(e) = output.send(Message::with_new_payload(msg, embeddings)) {
-                        error!("Failed to send embeddings: {:?}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get embeddings: {:?}", e);
-                }
-            }
-        }
-        debug!("GeminiEmbeddings completed");
+impl Default for GeminiEmbeddings {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl GeminiEmbeddings {
-    async fn get_embeddings(&self, body: Value) -> Result<Vec<Vec<f32>>, Box<dyn std::error::Error>> {
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={}", self.api_key);
-        let response = self.client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+    /// Creates a new [`GeminiEmbeddings`] instance reading `GEMINI_API_KEY` from the environment.
+    pub fn new() -> Self {
+        Self::try_new().expect("GEMINI_API_KEY environment variable not set")
+    }
+
+    /// Fallible constructor reading `GEMINI_API_KEY` from the environment.
+    pub fn try_new() -> Result<Self> {
+        let api_key =
+            std::env::var("GEMINI_API_KEY").map_err(|e| Error::EnvVar("GEMINI_API_KEY", e))?;
+        Ok(Self::with_api_key(api_key))
+    }
+
+    /// Creates a new [`GeminiEmbeddings`] instance with an explicit `api_key`.
+    pub fn with_api_key(api_key: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_key: api_key.into(),
+        }
+    }
+
+    async fn get_embeddings(&self, body: &Value) -> Result<Vec<Vec<f32>>> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:batchEmbedContents?key={}",
+            GEMINI_EMBEDDING_MODEL, self.api_key
+        );
+
+        let response = self.client.post(&url).json(body).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
-            return Err(format!("API request failed: {}", error_text).into());
+            return Err(Error::Api(format!(
+                "Gemini API request failed: {}",
+                error_text
+            )));
         }
-        
-        let json_response: serde_json::Value = response.json().await?;
 
-        // Parse multiple embeddings
-        let embeddings = json_response["embeddings"]
-            .as_array()
-            .ok_or("Missing embeddings array in response")?
-            .iter()
-            .map(|embedding| {
-                embedding["values"]
-                    .as_array()
-                    .ok_or("Missing values in embedding")
-                    .map(|values| {
-                        values.iter()
-                            .map(|v| v.as_f64().unwrap_or(0.0) as f32)
-                            .collect::<Vec<f32>>()
-                    })
-            })
-            .collect::<Result<Vec<Vec<f32>>, _>>()?;
-
-        Ok(embeddings)
+        let parsed: BatchEmbedResponse = response.json().await?;
+        Ok(parsed.embeddings.into_iter().map(|e| e.values).collect())
     }
 }
+
+impl Operator for GeminiEmbeddings {
+    type Input = Vec<String>;
+    type Output = Vec<Vec<f32>>;
+
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+        debug!("GeminiEmbeddings starting");
+
+        while let Some(msg) = input.recv().await {
+            debug!("Processing {} texts for embeddings", msg.payload.len());
+
+            let requests: Vec<_> = msg
+                .payload
+                .iter()
+                .map(|t| {
+                    json!({
+                        "model": GEMINI_EMBEDDING_MODEL,
+                        "content": {
+                            "parts": [{ "text": t }]
+                        }
+                    })
+                })
+                .collect();
+
+            let body = json!({ "requests": requests });
+
+            match self.get_embeddings(&body).await {
+                Ok(embeddings) => {
+                    output.send(msg.with_new_payload(embeddings)).await?;
+                }
+                Err(e) => {
+                    error!("Failed to get embeddings: {}", e);
+                }
+            }
+        }
+
+        debug!("GeminiEmbeddings completed");
+        Ok(())
+    }
+}
+
+impl_operator_component!(GeminiEmbeddings, Vec<String>, Vec<Vec<f32>>);

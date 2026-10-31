@@ -1,31 +1,35 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
-use crate::pipeline::channel::{Receiver, Sender};
+use crate::error::Result;
+use crate::impl_sink_component;
+use crate::pipeline::{Receiver, Sink};
 use std::sync::{Arc, Mutex};
+use tracing::debug;
 
+#[derive(Clone, Debug, Default)]
 pub struct NumberCollector {
     pub results: Arc<Mutex<Vec<i32>>>,
 }
 
-impl PipelineComponent for NumberCollector {
-    type Input = i32;
-    type Output = ();
-
-    fn new() -> Self {
-        NumberCollector { 
-            results: Arc::new(Mutex::new(Vec::new()))
-        }
+impl NumberCollector {
+    pub fn new() -> Self {
+        Self::default()
     }
+}
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        eprintln!("NumberCollector starting");
-        while let Ok(msg) = input.recv() {
+impl Sink for NumberCollector {
+    type Input = i32;
+
+    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
+        debug!("NumberCollector starting");
+        while let Some(msg) = input.recv().await {
             let num = msg.payload;
-            eprintln!("NumberCollector received {}", num);
+            debug!("NumberCollector received {}", num);
             if let Ok(mut results) = self.results.lock() {
                 results.push(num);
-                eprintln!("NumberCollector stored {}", num);
             }
         }
-        eprintln!("NumberCollector completed");
+        debug!("NumberCollector completed");
+        Ok(())
     }
-} 
+}
+
+impl_sink_component!(NumberCollector, i32);

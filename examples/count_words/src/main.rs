@@ -1,106 +1,85 @@
 use floq::{
-    pipeline::{PipelineTask, PipelineComponent, ComponentContext, Message},
-
-    sources::{
-        BlueskyFirehoseSource,
-        MastodonFirehoseSource,
-    },
-    slots::{
-        RoundRobinSplitter,
-        Merger,
-    },
-    functions::{
-        Window,
-        Reduce,
-    },  
-    pipeline::channel::{Sender, Receiver},
+    functions::{Reduce, Window},
+    impl_sink_component,
+    pipeline::{PipelineTask, Receiver, Sink},
+    sources::{BlueskyFirehoseSource, MastodonFirehoseSource},
+    Result,
 };
 use std::{collections::HashMap, time::Duration};
-use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-struct HashMapPrinterSink {
+#[derive(Default)]
+struct HashMapPrinterSink;
+
+impl HashMapPrinterSink {
+    fn new() -> Self {
+        Self
+    }
 }
 
-
-/**
- * This is a simple sink that prints the word counts to the console.
- */
-impl PipelineComponent for HashMapPrinterSink {
+/// Simple sink that logs words appearing more than 20 times in the window.
+impl Sink for HashMapPrinterSink {
     type Input = HashMap<String, usize>;
-    type Output = ();
 
-    fn new() -> Self {
-        HashMapPrinterSink {}
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, _task: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, input: Receiver<Self::Input>) -> Result<()> {
         debug!("HashMapPrinterSink starting");
-        while let Ok(msg) = input.recv() {
+        while let Some(msg) = input.recv().await {
             info!("Word counts in last window:");
-            for (word, count) in msg.payload.iter() {
-                if *count > 20 {  // Only show words that appear more than 20 times
+            for (word, count) in &msg.payload {
+                if *count > 20 {
                     info!("  '{}': {} times", word, count);
                 }
             }
         }
         debug!("HashMapPrinterSink completed");
+        Ok(())
     }
 }
 
+impl_sink_component!(HashMapPrinterSink, HashMap<String, usize>);
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]   
-async fn main() {
+#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let access_token = std::env::var("MASTODON_ACCESS_TOKEN").expect("MASTODON_ACCESS_TOKEN not set");
-    
-    // Let's create Mastodon and Bluesky sources
-    let mastodon_source = PipelineTask::new(MastodonFirehoseSource::with_token("https://mastodon.social".to_string(), access_token));
+    let access_token =
+        std::env::var("MASTODON_ACCESS_TOKEN").expect("MASTODON_ACCESS_TOKEN not set");
+
+    let mastodon_source = PipelineTask::new(MastodonFirehoseSource::with_token(
+        "https://mastodon.social",
+        access_token,
+    ));
     let bluesky_source = PipelineTask::new(BlueskyFirehoseSource::new());
 
-    // We combine these sources into a single source, so we receive messages from both networks into a same channel
+    // Combine heterogeneous sources into a single stream.
     let source = mastodon_source.combine(vec![bluesky_source]);
 
-    // Window function groups messages into windows of 10 seconds, i.e. we  print out the word counts every 10 seconds
+    // Group messages into tumbling windows of 10 seconds.
     let window = PipelineTask::new(Window::with_duration(Duration::from_secs(10)));
 
-    // Create a reducer that counts word frequencies
+    // Count word frequencies in each window.
     let reducer = PipelineTask::new(Reduce::new(
         HashMap::new(),
         |acc: &mut HashMap<String, usize>, texts: Vec<String>| {
-            // Clear the previous counts
             acc.clear();
-            
-            // Count words in this window
             for text in texts {
-                // Split text into words and count them
                 for word in text.split_whitespace() {
-                    let count = acc.entry(word.to_string()).or_insert(0);
-                    *count += 1;
+                    *acc.entry(word.to_string()).or_insert(0) += 1;
                 }
             }
-        }
+        },
     ));
 
-    // Create a sink that prints the word counts to the console
     let sink = PipelineTask::new(HashMapPrinterSink::new());
 
     info!("Starting pipeline...");
 
-    // Define the pipeline using the pipeline builder syntax
-    let pipeline = source 
-                    | window
-                    | reducer
-                    | sink;
-    
-    // Run the pipeline and wait for it to complete, obviously this is streaming pipeline and will run forever unless
-    // we stop it manually or error occurs.
-    pipeline.run().await;
+    let pipeline = source | window | reducer | sink;
+
+    pipeline.run().await?;
 
     info!("Pipeline completed");
+    Ok(())
 }
-
-

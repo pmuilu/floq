@@ -1,28 +1,31 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-use std::sync::Arc;
+use crate::error::Result;
+use crate::impl_operator_component;
+use crate::pipeline::{Operator, Receiver, Sender};
+use tracing::debug;
 
+#[derive(Clone, Copy, Debug, Default)]
 pub struct NumberDoubler;
 
-impl PipelineComponent for NumberDoubler {
+impl NumberDoubler {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Operator for NumberDoubler {
     type Input = i32;
     type Output = i32;
 
-    fn new() -> Self {
-        NumberDoubler
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        eprintln!("NumberDoubler starting");
-        while let Ok(msg) = input.recv() {
-            let num = msg.payload;
-            eprintln!("NumberDoubler received {}", num);
-            if output.send(Message::with_new_payload(msg, num * 2)).is_err() {
-                eprintln!("NumberDoubler failed to send {}", num * 2);
-                break;
-            }
-            eprintln!("NumberDoubler sent {}", num * 2);
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+        debug!("NumberDoubler starting");
+        while let Some(msg) = input.recv().await {
+            let doubled = msg.payload * 2;
+            debug!("NumberDoubler received {}, sending {}", msg.payload, doubled);
+            output.send(msg.with_new_payload(doubled)).await?;
         }
-        eprintln!("NumberDoubler completed");
+        debug!("NumberDoubler completed");
+        Ok(())
     }
-} 
+}
+
+impl_operator_component!(NumberDoubler, i32, i32);

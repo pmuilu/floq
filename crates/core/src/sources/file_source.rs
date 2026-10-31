@@ -1,54 +1,43 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-use std::sync::Arc;
-use tracing::{debug, error};
-use tokio::fs::File;
-use tokio::io::{BufReader, AsyncBufReadExt};
+use crate::error::Result;
+use crate::impl_source_component;
+use crate::pipeline::{Message, Sender, Source};
 use std::path::PathBuf;
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tracing::debug;
 
+/// A pipeline source that streams a file line-by-line.
+#[derive(Clone, Debug)]
 pub struct FileSource {
     path: PathBuf,
 }
 
 impl FileSource {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
-        FileSource {
-            path: path.into(),
-        }
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 }
 
-impl PipelineComponent for FileSource {
-    type Input = ();
+impl Source for FileSource {
     type Output = String;
 
-    fn new() -> Self {
-        panic!("FileSource requires a file path. Use FileSource::new() instead.")
-    }
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
+        debug!("FileSource starting: {}", self.path.display());
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        debug!("FileSource starting");
-
-        let file = match File::open(&self.path).await {
-            Ok(file) => file,
-            Err(e) => {
-                error!("Failed to open file {}: {}", self.path.display(), e);
-                return;
-            }
-        };
-
+        let file = File::open(&self.path).await?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Some(line) = lines.next_line().await? {
             debug!("FileSource read line");
-            if let Err(e) = output.send(Message::new(line)) {
-                error!("Failed to send line: {}", e);
+            if output.send(Message::new(line)).await.is_err() {
                 break;
             }
-            debug!("FileSource sent line");
         }
 
         debug!("FileSource completed");
+        Ok(())
     }
-} 
+}
+
+impl_source_component!(FileSource, String);

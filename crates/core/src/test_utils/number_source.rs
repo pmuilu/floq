@@ -1,28 +1,44 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-use std::sync::Arc;
+use crate::error::Result;
+use crate::impl_source_component;
+use crate::pipeline::{Message, Sender, Source};
+use tracing::debug;
 
+#[derive(Clone, Debug)]
 pub struct NumberSource {
     count: usize,
 }
 
-impl PipelineComponent for NumberSource {
-    type Input = ();
-    type Output = i32;
+impl Default for NumberSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    fn new() -> Self {
-        NumberSource { count: 3 }
+impl NumberSource {
+    pub fn new() -> Self {
+        Self { count: 3 }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        eprintln!("NumberSource starting");
+    pub fn with_count(count: usize) -> Self {
+        Self { count }
+    }
+}
+
+impl Source for NumberSource {
+    type Output = i32;
+
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
+        debug!("NumberSource starting");
         for i in 0..self.count {
-            eprintln!("NumberSource sending {}", i);
-            if output.send(Message::new(i as i32)).is_err() {
-                eprintln!("NumberSource failed to send {}", i);
+            debug!("NumberSource sending {}", i);
+            if output.send(Message::new(i as i32)).await.is_err() {
+                debug!("NumberSource failed to send {}", i);
                 break;
             }
         }
-        eprintln!("NumberSource completed");
+        debug!("NumberSource completed");
+        Ok(())
     }
-} 
+}
+
+impl_source_component!(NumberSource, i32);

@@ -1,32 +1,45 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-use std::sync::Arc;
+use crate::error::Result;
+use crate::impl_source_component;
+use crate::pipeline::{Message, Sender, Source};
 use tracing::debug;
 
+#[derive(Clone, Debug)]
 pub struct StringSource {
     strings: Vec<String>,
 }
 
-impl PipelineComponent for StringSource {
-    type Input = ();
-    type Output = String;
+impl Default for StringSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    fn new() -> Self {
-        StringSource {
+impl StringSource {
+    pub fn new() -> Self {
+        Self {
             strings: vec!["0".to_string(), "1".to_string(), "2".to_string()],
         }
     }
 
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    pub fn with_items(strings: Vec<String>) -> Self {
+        Self { strings }
+    }
+}
+
+impl Source for StringSource {
+    type Output = String;
+
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
         debug!("StringSource starting");
         for s in &self.strings {
             debug!("StringSource sending {}", s);
-            if output.send(Message::new(s.clone())).is_err() {
-                debug!("StringSource failed to send {}", s);
+            if output.send(Message::new(s.clone())).await.is_err() {
                 break;
             }
-            debug!("StringSource sent {}", s);
         }
         debug!("StringSource completed");
+        Ok(())
     }
-} 
+}
+
+impl_source_component!(StringSource, String);

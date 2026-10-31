@@ -1,73 +1,75 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
-use crate::pipeline::{Receiver, Sender};
+use crate::error::Result;
+use crate::pipeline::{Operator, Receiver, Sender};
 use std::sync::Arc;
-use std::marker::PhantomData;
-use tracing::{debug, error};
+use tracing::debug;
 
-pub struct Map<I, O> 
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + 'static,
-{
-    transform: Arc<dyn Fn(I) -> O + Send + Sync>,
-    _phantom: PhantomData<(I, O)>,
+type TransformFn<I, O> = dyn Fn(I) -> O + Send + Sync;
+
+/// Stateless transformation operator that maps each `Message<I>` to `Message<O>` by value.
+pub struct Map<I, O> {
+    transform: Arc<TransformFn<I, O>>,
 }
 
-impl<I, O> Clone for Map<I, O>
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + 'static,
-{
+impl<I, O> Clone for Map<I, O> {
     fn clone(&self) -> Self {
         Self {
-            transform: self.transform.clone(),
-            _phantom: PhantomData,
+            transform: Arc::clone(&self.transform),
         }
     }
 }
 
-impl<I, O> Map<I, O> 
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + 'static,
+impl<I, O> Map<I, O>
+where
+    I: Send + 'static,
+    O: Send + 'static,
 {
-    pub fn new<F>(transform: F) -> Self 
-    where 
+    pub fn new<F>(transform: F) -> Self
+    where
         F: Fn(I) -> O + Send + Sync + 'static,
     {
-        Map {
+        Self {
             transform: Arc::new(transform),
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<I, O> PipelineComponent for Map<I, O> 
-where 
-    I: Send + Sync + Clone + 'static,
-    O: Send + Sync + Clone + 'static,
+impl<I, O> Operator for Map<I, O>
+where
+    I: Send + 'static,
+    O: Send + 'static,
 {
     type Input = I;
     type Output = O;
 
-    fn new() -> Self {
-        panic!("Map requires a transform function. Use Map::new() instead.")
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("Map starting");
-        
-        while let Ok(msg) = input.recv() {
+
+        while let Some(msg) = input.recv().await {
             debug!("Map received item");
-            let transformed = (self.transform)(msg.payload.clone());
-            
-            if let Err(e) = output.send(msg.with_new_payload(transformed)) {
-                error!("Failed to send transformed item: {:?}", e);
-                break;
-            }
+            let mapped = msg.map(|payload| (self.transform)(payload));
+            output.send(mapped).await?;
             debug!("Map sent transformed item");
         }
-        
+
         debug!("Map completed");
+        Ok(())
+    }
+}
+
+impl<I, O> crate::pipeline::PipelineComponent for Map<I, O>
+where
+    I: Send + 'static,
+    O: Send + 'static,
+{
+    type Input = I;
+    type Output = O;
+
+    async fn run(
+        &self,
+        input: Receiver<Self::Input>,
+        output: Sender<Self::Output>,
+        _context: Arc<crate::pipeline::ComponentContext<Self::Input, Self::Output>>,
+    ) -> Result<()> {
+        <Self as Operator>::run(self, input, output).await
     }
 }

@@ -1,29 +1,38 @@
-use pyo3::prelude::*;
-use std::sync::Arc;
-use std::time::Duration;
 use crate::py_pipeline_wrapper::PyPipelineWrapper;
-use floq::pipeline::PipelineTask;
 use floq::functions::Window;
+use floq::pipeline::PipelineTask;
+use pyo3::prelude::*;
+use std::time::Duration;
 
-/// Python wrapper for Window
+/// Python wrapper for [`Window`].
 #[pyclass(name = "Window")]
 #[derive(Clone)]
 pub struct PyWindow {
     window: Window<String>,
-    task: Arc<PipelineTask<Window<String>>>,
+    stage: PipelineTask<String, Vec<String>>,
+    rooted: Option<PipelineTask<(), Vec<String>>>,
 }
 
 impl PyPipelineWrapper<String, Vec<String>> for PyWindow {
     type Component = Window<String>;
-    
-    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
-        self.task.clone()
+
+    fn get_stage(&self) -> &PipelineTask<String, Vec<String>> {
+        &self.stage
     }
-    
-    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+
+    fn get_rooted(&self) -> Option<&PipelineTask<(), Vec<String>>> {
+        self.rooted.as_ref()
+    }
+
+    fn from_parts(
+        component: Self::Component,
+        stage: PipelineTask<String, Vec<String>>,
+        rooted: Option<PipelineTask<(), Vec<String>>>,
+    ) -> Self {
         Self {
             window: component,
-            task: Arc::new(task),
+            stage,
+            rooted,
         }
     }
 
@@ -37,20 +46,18 @@ impl PyWindow {
     #[new]
     fn new(duration_ms: u64) -> Self {
         let window = Window::with_duration(Duration::from_millis(duration_ms));
-
-        PyWindow {
+        Self {
             window: window.clone(),
-            task: Arc::new(PipelineTask::new(window)),
+            stage: PipelineTask::new(window),
+            rooted: None,
         }
     }
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            self.compose_vec_string(py, &other)
-        })
+        Python::with_gil(|py| self.compose_vec_string(py, &other))
     }
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         <Self as PyPipelineWrapper<String, Vec<String>>>::run_impl(self, py)
     }
-} 
+}

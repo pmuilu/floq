@@ -1,87 +1,96 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Receiver, Sender, Message};
+use crate::error::{Error, Result};
+use crate::pipeline::{Operator, PipelineComponent, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::marker::PhantomData;
-use tracing::{debug, error};
+use tracing::debug;
 
-pub struct Reduce<I, O> 
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + 'static,
-{
-    reducer: Arc<dyn Fn(&mut O, I) + Send + Sync>,
+type ReducerFn<I, O> = dyn Fn(&mut O, I) + Send + Sync;
+
+/// Stateful reduction operator that folds incoming items of type `I` into an accumulator `O`.
+pub struct Reduce<I, O> {
+    reducer: Arc<ReducerFn<I, O>>,
     current_value: Arc<Mutex<O>>,
-    _phantom: PhantomData<I>,
 }
 
-impl<I, O> Clone for Reduce<I, O>
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + Clone + 'static,
-{
+impl<I, O> Clone for Reduce<I, O> {
     fn clone(&self) -> Self {
         Self {
-            reducer: self.reducer.clone(),  // Now this works because Arc implements Clone
-            current_value: self.current_value.clone(),
-            _phantom: PhantomData,
+            reducer: Arc::clone(&self.reducer),
+            current_value: Arc::clone(&self.current_value),
         }
     }
 }
 
-impl<I, O> Reduce<I, O> 
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + Clone + 'static,
+impl<I, O> Reduce<I, O>
+where
+    I: Send + 'static,
+    O: Send + Clone + 'static,
 {
-    pub fn new<F>(initial: O, reducer: F) -> Self 
-    where 
+    pub fn new<F>(initial: O, reducer: F) -> Self
+    where
         F: Fn(&mut O, I) + Send + Sync + 'static,
     {
-        Reduce {
-            reducer: Arc::new(reducer),  // Wrap in Arc here
+        Self {
+            reducer: Arc::new(reducer),
             current_value: Arc::new(Mutex::new(initial)),
-            _phantom: PhantomData,
         }
     }
 
     pub fn get_result(&self) -> O {
-        self.current_value.lock().unwrap().clone()
+        self.current_value
+            .lock()
+            .expect("Reduce accumulator mutex poisoned")
+            .clone()
     }
 }
 
-impl<I, O> PipelineComponent for Reduce<I, O> 
-where 
-    I: Send + Sync + 'static,
-    O: Send + Sync + Clone + 'static,
+impl<I, O> Operator for Reduce<I, O>
+where
+    I: Send + 'static,
+    O: Send + Clone + 'static,
 {
     type Input = I;
     type Output = O;
 
-    fn new() -> Self {
-        panic!("Reduce requires initial value and reducer function. Use Reduce::new() instead.")
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("Reduce starting");
-        
-        while let Ok(item) = input.recv() {
+
+        while let Some(item) = input.recv().await {
             debug!("Reduce received item");
-            
-            // Apply reducer function to current value
-            if let Ok(mut current) = self.current_value.lock() {
-                (self.reducer)(&mut current, item.payload);
-                
-                // Send the updated value
-                if let Err(e) = output.send(Message::new(current.clone())) {
-                    error!("Failed to send reduced value: {:?}", e);
-                    break;
-                }
-                debug!("Reduce sent updated value");
-            } else {
-                error!("Failed to lock current value");
-                break;
-            }
+
+            let out_msg = {
+                let mut current = self
+                    .current_value
+                    .lock()
+                    .map_err(|_| Error::Custom("Reduce mutex poisoned".to_string()))?;
+                item.map(|payload| {
+                    (self.reducer)(&mut current, payload);
+                    current.clone()
+                })
+            };
+
+            output.send(out_msg).await?;
+            debug!("Reduce sent updated value");
         }
-        
+
         debug!("Reduce completed");
+        Ok(())
+    }
+}
+
+impl<I, O> PipelineComponent for Reduce<I, O>
+where
+    I: Send + 'static,
+    O: Send + Clone + 'static,
+{
+    type Input = I;
+    type Output = O;
+
+    async fn run(
+        &self,
+        input: Receiver<Self::Input>,
+        output: Sender<Self::Output>,
+        _context: Arc<crate::pipeline::ComponentContext<Self::Input, Self::Output>>,
+    ) -> Result<()> {
+        <Self as Operator>::run(self, input, output).await
     }
 }

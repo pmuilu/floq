@@ -1,59 +1,69 @@
-use pyo3::prelude::*;
-use std::sync::Arc;
 use crate::py_pipeline_wrapper::PyPipelineWrapper;
-use floq::pipeline::{PipelineComponent, PipelineTask, ComponentContext, Sender, Receiver, Message};
+use floq::impl_operator_component;
+use floq::pipeline::{Operator, PipelineTask, Receiver, Sender};
+use floq::Result;
+use pyo3::prelude::*;
 
 #[derive(Clone)]
 pub struct RustPipelineComponent {
     callback: PyObject,
 }
 
-impl PipelineComponent for RustPipelineComponent {
+impl Operator for RustPipelineComponent {
     type Input = String;
     type Output = String;
 
-    fn new() -> Self {
-        panic!("RustPipelineComponent::new() should not be called directly")
-    }
-
-    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
-        Python::with_gil(|py| {
-            while let Ok(msg) = input.recv() {
-                match self.callback.call1(py, (msg.payload,)) {
-                    Ok(result) => {
-                        if let Ok(result_str) = result.extract::<String>(py) {
-                            let _ = output.send(Message::new(result_str));
-                        }
-                    },
-                    Err(e) => e.print(py),
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
+        while let Some(msg) = input.recv().await {
+            let transformed = Python::with_gil(|py| {
+                match self.callback.call1(py, (msg.payload.as_str(),)) {
+                    Ok(result) => result.extract::<String>(py).ok(),
+                    Err(e) => {
+                        e.print(py);
+                        None
+                    }
                 }
+            });
+
+            if let Some(result_str) = transformed {
+                output.send(msg.with_new_payload(result_str)).await?;
             }
-        });
+        }
+        Ok(())
     }
 }
 
-/// Python wrapper for a simple pipeline component
+impl_operator_component!(RustPipelineComponent, String, String);
+
+/// Python wrapper for a custom string-to-string pipeline operator.
 #[pyclass(name = "PipelineComponent")]
 #[derive(Clone)]
 pub struct PyPipelineComponent {
-    #[allow(dead_code)]
-    callback: PyObject,
     component: RustPipelineComponent,
-    task: Arc<PipelineTask<RustPipelineComponent>>,
+    stage: PipelineTask<String, String>,
+    rooted: Option<PipelineTask<(), String>>,
 }
 
 impl PyPipelineWrapper<String, String> for PyPipelineComponent {
     type Component = RustPipelineComponent;
-    
-    fn get_task(&self) -> Arc<PipelineTask<Self::Component>> {
-        self.task.clone()
+
+    fn get_stage(&self) -> &PipelineTask<String, String> {
+        &self.stage
     }
-    
-    fn from_task_and_component(component: Self::Component, task: PipelineTask<Self::Component>) -> Self {
+
+    fn get_rooted(&self) -> Option<&PipelineTask<(), String>> {
+        self.rooted.as_ref()
+    }
+
+    fn from_parts(
+        component: Self::Component,
+        stage: PipelineTask<String, String>,
+        rooted: Option<PipelineTask<(), String>>,
+    ) -> Self {
         Self {
-            callback: component.callback.clone(),
             component,
-            task: Arc::new(task),
+            stage,
+            rooted,
         }
     }
 
@@ -66,21 +76,19 @@ impl PyPipelineWrapper<String, String> for PyPipelineComponent {
 impl PyPipelineComponent {
     #[new]
     fn new(callback: PyObject) -> Self {
-        let component = RustPipelineComponent { callback: callback.clone() };
-        PyPipelineComponent {
-            callback: callback.clone(),
+        let component = RustPipelineComponent { callback };
+        Self {
             component: component.clone(),
-            task: Arc::new(PipelineTask::new(component)),
+            stage: PipelineTask::new(component),
+            rooted: None,
         }
     }
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            self.compose_string(py, &other)
-        })
+        Python::with_gil(|py| self.compose_string(py, &other))
     }
 
     fn run<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         <Self as PyPipelineWrapper<String, String>>::run_impl(self, py)
     }
-} 
+}

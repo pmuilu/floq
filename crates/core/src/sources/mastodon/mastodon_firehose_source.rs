@@ -1,13 +1,12 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message as FloqMessage};
-use crate::pipeline::{Receiver, Sender};
+use crate::error::{Error, Result};
+use crate::impl_source_component;
+use crate::pipeline::{Message as FloqMessage, Sender, Source};
 use futures::StreamExt;
+use serde::Deserialize;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use serde::Deserialize;
-use std::sync::Arc;
 use tracing::{debug, error, info};
 use url::Url;
-
 
 #[derive(Debug, Deserialize)]
 struct MastodonEvent {
@@ -21,134 +20,107 @@ struct MastodonStatus {
     created_at: String,
 }
 
+/// Streams public status updates from a Mastodon server's WebSocket streaming API.
+#[derive(Clone, Debug)]
 pub struct MastodonFirehoseSource {
     server_url: String,
     access_token: Option<String>,
 }
 
+impl Default for MastodonFirehoseSource {
+    fn default() -> Self {
+        Self::new("https://mastodon.social")
+    }
+}
+
 impl MastodonFirehoseSource {
-    pub fn new(server_url: String) -> Self {
-        MastodonFirehoseSource {
-            server_url,
+    pub fn new(server_url: impl Into<String>) -> Self {
+        Self {
+            server_url: server_url.into(),
             access_token: None,
         }
     }
 
-    pub fn with_token(server_url: String, access_token: String) -> Self {
-        MastodonFirehoseSource {
-            server_url,
-            access_token: Some(access_token),
+    pub fn with_token(server_url: impl Into<String>, access_token: impl Into<String>) -> Self {
+        Self {
+            server_url: server_url.into(),
+            access_token: Some(access_token.into()),
         }
     }
 
-    fn build_websocket_url(&self) -> Result<Url, url::ParseError> {
+    fn build_websocket_url(&self) -> Result<Url> {
         let mut url = Url::parse(&self.server_url)?;
-        
-        // Convert http(s) to ws(s)
+
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
-        debug!("Using scheme: {}", scheme);
-        url.set_scheme(scheme).unwrap();
-        
-        // Extract the domain
-        let domain = url.domain().unwrap_or("mastodon.social");
-        debug!("Using domain: {}", domain);
-        
-        // Construct the streaming URL
+        url.set_scheme(scheme)
+            .map_err(|_| Error::Configuration(format!("Invalid URL scheme in {}", self.server_url)))?;
+
+        let domain = url.domain().unwrap_or("mastodon.social").to_owned();
         let streaming_domain = format!("streaming.{}", domain);
-        debug!("Using streaming domain: {}", streaming_domain);
         url.set_host(Some(&streaming_domain))?;
-        
-        // Set the streaming API path
         url.set_path("/api/v1/streaming");
-        
-        // Add stream type and access token
+
         url.query_pairs_mut()
             .append_pair("stream", "public")
             .append_pair("access_token", self.access_token.as_deref().unwrap_or(""));
-        
-        debug!("Final WebSocket URL: {}", url);
+
+        debug!("Final Mastodon WebSocket URL: {}", url);
         Ok(url)
     }
 }
 
-impl PipelineComponent for MastodonFirehoseSource {
-    type Input = ();
+impl Source for MastodonFirehoseSource {
     type Output = String;
 
-    fn new() -> Self {
-        MastodonFirehoseSource::new("https://mastodon.social".to_string())
-    }
-
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
         debug!("MastodonFirehoseSource starting");
 
-        let url = match self.build_websocket_url() {
-            Ok(url) => url,
-            Err(e) => {
-                error!("Failed to build WebSocket URL: {:?}", e);
-                return;
-            }
-        };
-
+        let url = self.build_websocket_url()?;
         info!("Connecting to Mastodon streaming API at {}", url);
 
-        let (ws_stream, _) = match connect_async(url).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                error!("Failed to connect to Mastodon: {:?}", e);
-                return;
-            }
-        };
-
+        let (ws_stream, _) = connect_async(url).await?;
         let (_write, mut read) = ws_stream.split();
 
         while let Some(msg_result) = read.next().await {
             match msg_result {
-                Ok(msg) => {
-                    match msg {
-                        Message::Text(text) => {
-                            debug!("Received text: {}", text);
-                            // Try to parse as Mastodon event
-                            if let Ok(event) = serde_json::from_str::<MastodonEvent>(&text) {
-                                if event.event == "update" {
-                                    // Parse the payload as a status
-                                    if let Ok(status) = serde_json::from_str::<MastodonStatus>(&event.payload) {
-                                        debug!("Parsed status: {}", status.content);
-                                        if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&status.created_at) {
-                                            let unix_ms = timestamp.timestamp_millis() as u64;
-                                            if let Err(e) = output.send(FloqMessage::with_event_time(status.content, unix_ms)) {
-                                                error!("Failed to send status: {:?}", e);
-                                                break;
-                                            }
-                                        } else {
-                                            error!("Failed to parse timestamp: {}", status.created_at);
-                                        }
-                                    } else {
-                                        debug!("Failed to parse payload as status: {}", event.payload);
+                Ok(Message::Text(text)) => {
+                    debug!("Received text: {}", text);
+                    if let Ok(event) = serde_json::from_str::<MastodonEvent>(&text) {
+                        if event.event == "update" {
+                            if let Ok(status) = serde_json::from_str::<MastodonStatus>(&event.payload) {
+                                if let Ok(timestamp) =
+                                    chrono::DateTime::parse_from_rfc3339(&status.created_at)
+                                {
+                                    let unix_ms = timestamp.timestamp_millis().max(0) as u64;
+                                    if output
+                                        .send(FloqMessage::with_event_time(status.content, unix_ms))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
                                     }
                                 } else {
-                                    debug!("Ignoring non-update event: {}", event.event);
+                                    error!("Failed to parse timestamp: {}", status.created_at);
                                 }
-                            } else {
-                                debug!("Failed to parse message as event: {}", text);
                             }
-                        }
-                        Message::Close(_) => {
-                            info!("Received close frame from Mastodon");
-                            break;
-                        }
-                        _ => {
-                            debug!("Ignoring non-text message");
                         }
                     }
                 }
-                Err(e) => {
-                    error!("WebSocket error: {:?}", e);
+                Ok(Message::Close(_)) => {
+                    info!("Received close frame from Mastodon");
                     break;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Mastodon WebSocket error: {}", e);
+                    return Err(e.into());
                 }
             }
         }
 
         debug!("MastodonFirehoseSource completed");
+        Ok(())
     }
-} 
+}
+
+impl_source_component!(MastodonFirehoseSource, String);

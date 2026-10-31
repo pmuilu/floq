@@ -1,40 +1,60 @@
-use crate::pipeline::{PipelineComponent, ComponentContext};
-use crate::pipeline::channel::{Receiver, Sender};
+use crate::error::Result;
+use crate::pipeline::{ComponentContext, Operator, PipelineComponent, Receiver, Sender};
 use std::marker::PhantomData;
-use tracing::{debug, error};
 use std::sync::Arc;
+use tracing::debug;
 
-pub struct Merger<T: Send + Sync + 'static> {
-    _phantom: PhantomData<T>,
+/// Merges messages from multiple upstream slots into the downstream stage.
+///
+/// Note: Connecting a multi-slot stage to a single-slot stage automatically merges channels,
+/// so [`Merger`] is optional and kept for explicit topology definitions.
+#[derive(Debug, Clone)]
+pub struct Merger<T> {
+    _phantom: PhantomData<fn() -> T>,
 }
 
-impl<T: Send + Sync + 'static> PipelineComponent for Merger<T> {
-    type Input = T;
-    type Output = T;
+impl<T> Default for Merger<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-    fn new() -> Self {
-        Merger {    
+impl<T> Merger<T> {
+    pub fn new() -> Self {
+        Self {
             _phantom: PhantomData,
         }
     }
+}
 
-    async fn run(&self, input: Receiver<Self::Input>, _output: Sender<Self::Output>, context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+impl<T: Send + 'static> Operator for Merger<T> {
+    type Input = T;
+    type Output = T;
+
+    async fn run(&self, input: Receiver<Self::Input>, output: Sender<Self::Output>) -> Result<()> {
         debug!("Merger starting");
-        let input_receivers = &context.input_receivers;
-        let output_senders = &context.output_senders;
 
-        assert!(input_receivers.len() > 1, "Merger requires more than one input receiver");
-        assert!(output_senders.len() == 1, "Merger requires exactly one output sender");
-        
-        while let Ok(item) = input.recv() {
-            debug!("Merger received item"); 
-            if let Err(e) = output_senders[0].send(item) {
-                error!("Failed to send merged item: {:?}", e);
-                break;
-            }
+        while let Some(item) = input.recv().await {
+            debug!("Merger received item");
+            output.send(item).await?;
             debug!("Merger forwarded item");
         }
-    
+
         debug!("Merger completed");
+        Ok(())
+    }
+}
+
+impl<T: Send + 'static> PipelineComponent for Merger<T> {
+    type Input = T;
+    type Output = T;
+
+    async fn run(
+        &self,
+        input: Receiver<Self::Input>,
+        output: Sender<Self::Output>,
+        _context: Arc<ComponentContext<Self::Input, Self::Output>>,
+    ) -> Result<()> {
+        <Self as Operator>::run(self, input, output).await
     }
 }

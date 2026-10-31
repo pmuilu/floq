@@ -1,41 +1,36 @@
-use crate::pipeline::{PipelineComponent, ComponentContext, Message};
-use crate::pipeline::channel::{Receiver, Sender};
-
-use std::sync::Arc;
+use crate::error::Result;
+use crate::impl_source_component;
+use crate::pipeline::{Message, Sender, Source};
 use std::time::Duration;
 use tracing::debug;
 
+#[derive(Clone, Debug, Default)]
 pub struct DelayedStringSource {
     items: Vec<(String, Duration)>,
 }
 
 impl DelayedStringSource {
     pub fn new(items: Vec<(String, Duration)>) -> Self {
-        DelayedStringSource { items }
+        Self { items }
     }
 }
 
-impl PipelineComponent for DelayedStringSource {
-    type Input = ();
+impl Source for DelayedStringSource {
     type Output = String;
 
-    fn new() -> Self {
-        DelayedStringSource { items: Vec::new() }
-    }
-
-    async fn run(&self, _input: Receiver<Self::Input>, output: Sender<Self::Output>, _context: Arc<ComponentContext<Self::Input, Self::Output>>) {
+    async fn run(&self, output: Sender<Self::Output>) -> Result<()> {
         debug!("DelayedStringSource starting");
-        
+
         for (item, delay) in &self.items {
-            // Wait for the specified delay
             tokio::time::sleep(*delay).await;
-            
-            // Send the item
-            if let Err(_) = output.send(Message::new(item.clone())) {
+            if output.send(Message::new(item.clone())).await.is_err() {
                 break;
             }
         }
-        
+
         debug!("DelayedStringSource completed");
+        Ok(())
     }
-} 
+}
+
+impl_source_component!(DelayedStringSource, String);
