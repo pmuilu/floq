@@ -6,6 +6,7 @@ edition.workspace = true
 [features]
 default = ["full"]
 full = [
+    "adk",
     "bluesky",
     "mastodon",
     "websocket",
@@ -14,6 +15,7 @@ full = [
     "huggingface",
     "webhook",
 ]
+adk = ["dep:reqwest"]
 websocket = ["dep:tokio-tungstenite"]
 bluesky = ["websocket", "dep:ciborium", "dep:rs-car", "dep:chrono"]
 mastodon = ["websocket", "dep:chrono"]

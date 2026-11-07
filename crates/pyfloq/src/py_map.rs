@@ -63,9 +63,7 @@ impl PyMap {
 
     fn __or__(&self, other: PyObject) -> PyResult<PyObject> {
         Python::with_gil(|py| {
-            if let Ok(collector) = other.extract::<crate::py_collector::PyCollector>(py) {
-                Ok(self.connect_to(&collector).into_py(py))
-            } else if let Ok(reduce) = other.extract::<crate::py_reduce::PyReduce>(py) {
+            if let Ok(reduce) = other.extract::<crate::py_reduce::PyReduce>(py) {
                 let converter = Map::new(move |py_obj: PyObject| {
                     Python::with_gil(|py| py_obj.extract::<Vec<String>>(py).unwrap_or_default())
                 });
@@ -81,7 +79,7 @@ impl PyMap {
                 )
                 .into_py(py))
             } else {
-                Ok(py.None())
+                self.compose_pyobject(py, &other)
             }
         })
     }

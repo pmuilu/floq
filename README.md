@@ -11,7 +11,7 @@ Floq is a fast, single-node, data-parallel streaming framework for Rust (with Py
 - **Auto-Reconnecting Sources**: Exponential-backoff WebSocket reconnection (with sequence cursor resumption on Bluesky's ATProto firehose).
 - **Batteries-Included Connectors (Feature-Gated)**:
   - **Sources**: `BlueskyFirehoseSource`, `MastodonFirehoseSource`, `WebSocketSource`, `WebSocketMqttSource`, `FileSource`
-  - **Transformers & Sinks**: `GeminiEmbeddings` (`models/gemini-embedding-001`), `HuggingfaceEmbeddings`, `ChannelSink`, `WebhookSink`, `PrinterSink`
+  - **Transformers & Sinks**: `AdkAgent` (Google ADK), `GeminiEmbeddings` (`models/gemini-embedding-001`), `HuggingfaceEmbeddings`, `ChannelSink`, `WebhookSink`, `PrinterSink`
 
 ---
 
@@ -135,6 +135,37 @@ let combined_source = mastodon_source.combine(vec![bluesky_source]);
 let pipeline = combined_source | window | reducer | sink;
 ```
 
+### 5. Google ADK Agent Integration (`AdkAgent`)
+
+Pipe either individual `String` events or windowed `Vec<String>` batches directly into a Google ADK (`google-adk`) agent without an intermediate `Map` stage, and emit the agent's text response downstream:
+
+```rust
+use floq::{
+    functions::{Filter, Window},
+    pipeline::IntoTask,
+    sources::BlueskyFirehoseSource,
+    transformers::{AdkAgent, PrinterSink},
+};
+use std::time::Duration;
+
+let source = BlueskyFirehoseSource::new().into_task();
+let filter = Filter::with_pattern(r"(?i)\b(rust|ai|agent)\b")?.into_task();
+let window = Window::with_count_or_duration(25, Duration::from_secs(5)).into_task();
+
+// Polymorphic: accepts Vec<String> (or String) and emits String responses downstream.
+// Supports shared, keyed (per-user/source), or ephemeral per-batch sessions.
+let adk_agent = AdkAgent::new("http://localhost:8000", "trend_analyzer")
+    .with_prompt_prefix("Summarize key technical signals in this batch:\n")
+    .with_separator("\n---\n")
+    .with_shared_session("live_firehose_session")
+    .into_task();
+
+let sink = PrinterSink::new("[ADK] ").into_task();
+
+let pipeline = source | filter | window | adk_agent | sink;
+pipeline.run().await?;
+```
+
 ---
 
 ## Cargo Feature Flags
@@ -154,6 +185,7 @@ floq = { version = "0.1", default-features = false, features = ["bluesky", "gemi
 | `mastodon` | Enables `MastodonFirehoseSource` (`websocket`, `chrono`) |
 | `mqtt` | Enables `WebSocketMqttSource` (`rumqttc`) |
 | `gemini` | Enables `GeminiEmbeddings` (`reqwest`) |
+| `adk` | Enables `AdkAgent` Google ADK connector (`reqwest`) |
 | `huggingface` | Enables `HuggingfaceEmbeddings` (`reqwest`) |
 | `webhook` | Enables `WebhookSink` (`reqwest`) |
 

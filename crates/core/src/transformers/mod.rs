@@ -1,3 +1,5 @@
+#[cfg(feature = "adk")]
+pub mod adk_agent;
 pub mod channel_sink;
 #[cfg(feature = "gemini")]
 pub mod gemini_embeddings;
@@ -7,6 +9,8 @@ pub mod printer_sink;
 #[cfg(feature = "webhook")]
 pub mod webhook_sink;
 
+#[cfg(feature = "adk")]
+pub use adk_agent::{AdkAgent, AdkInput, AdkSessionMode};
 pub use channel_sink::ChannelSink;
 #[cfg(feature = "gemini")]
 pub use gemini_embeddings::GeminiEmbeddings;

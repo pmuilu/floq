@@ -325,3 +325,27 @@ async fn test_graceful_shutdown_drains_inflight_window() {
     let results = collector_results.lock().unwrap();
     assert_eq!(*results, vec!["item1,item2"]);
 }
+
+#[test]
+fn test_adk_agent_polymorphic_pipeline_composition() {
+    use floq::transformers::AdkAgent;
+
+    // 1. Compose AdkAgent directly after a String stage (Filter -> AdkAgent<String> -> Sink)
+    let string_agent = AdkAgent::<String>::new("http://localhost:8000", "triage_agent")
+        .with_prompt_prefix("Classify event:\n")
+        .with_source_id_session("default");
+    let _string_pipeline = StringSource::new().into_task()
+        | Filter::with_pattern(".*").unwrap().into_task()
+        | string_agent.into_task()
+        | StringCollector::new().into_task();
+
+    // 2. Compose AdkAgent directly after a Window stage (Window -> AdkAgent<Vec<String>> -> Sink)
+    let batch_agent = AdkAgent::<Vec<String>>::new("http://localhost:8000", "summary_agent")
+        .with_prompt_prefix("Summarize batch:\n")
+        .with_separator("\n---\n")
+        .with_ephemeral_sessions();
+    let _batch_pipeline = StringSource::new().into_task()
+        | Window::with_count(5).into_task()
+        | batch_agent.into_task()
+        | StringCollector::new().into_task();
+}

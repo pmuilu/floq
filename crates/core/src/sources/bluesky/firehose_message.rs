@@ -126,3 +126,41 @@ impl FirehoseMessage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_cbor_with_tag_42() {
+        let mut buf = Vec::new();
+        let header = Value::Map(vec![
+            (Value::Text("op".into()), Value::Integer(1.into())),
+            (Value::Text("t".into()), Value::Text("#commit".into())),
+        ]);
+        let body = Value::Map(vec![
+            (Value::Text("seq".into()), Value::Integer(999.into())),
+            (
+                Value::Text("commit".into()),
+                Value::Tag(42, Box::new(Value::Bytes(vec![0, 1, 85, 18, 32]))),
+            ),
+            (
+                Value::Text("ops".into()),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::Text("action".into()), Value::Text("create".into())),
+                    (
+                        Value::Text("cid".into()),
+                        Value::Tag(42, Box::new(Value::Bytes(vec![0, 1, 85, 18, 32]))),
+                    ),
+                ])]),
+            ),
+            (Value::Text("blocks".into()), Value::Bytes(vec![1, 2, 3])),
+        ]);
+        ciborium::ser::into_writer(&header, &mut buf).unwrap();
+        ciborium::ser::into_writer(&body, &mut buf).unwrap();
+
+        let parsed = FirehoseMessage::from_cbor(&buf);
+        assert!(parsed.is_some(), "Failed to parse CBOR with Tag 42");
+        assert_eq!(parsed.unwrap().seq, Some(999));
+    }
+}
