@@ -14,7 +14,9 @@ full = [
     "gemini",
     "huggingface",
     "webhook",
+    "sqlite",
 ]
+sqlite = []
 adk = ["dep:reqwest"]
 websocket = ["dep:tokio-tungstenite"]
 bluesky = ["websocket", "dep:ciborium", "dep:rs-car", "dep:chrono"]

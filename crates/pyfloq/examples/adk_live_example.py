@@ -31,15 +31,19 @@ async def run_live_sink_example():
     )
     live_queue = LiveRequestQueue()
 
-    # 2. Build a Rust-powered `pyfloq` pipeline that pushes formatted `types.Content`
-    #    batches into `live_queue` every 15 posts or 8 seconds.
+    # 2. Build a Rust-powered `pyfloq` pipeline that streams structured JSON posts
+    #    (with SQLite cursor checkpointing), filters specifically on `/text`, and pushes
+    #    formatted `types.Content` batches into `live_queue` every 15 posts or 8 seconds.
     pipeline = (
-        pyfloq.BlueskyFirehoseSource()
-        | pyfloq.Filter(r"(?i)\b(rust|python|ai|llm|agent)\b")
+        pyfloq.BlueskyFirehoseSource(
+            json_output=True,
+            checkpoint_db="floq_checkpoints.sqlite",
+        )
+        | pyfloq.Filter(r"(?i)\b(rust|python|ai|llm|agent)\b", json_path="/text")
         | pyfloq.Window.with_count_or_duration(15, 8000)
         | pyfloq.AdkLiveSink(
             live_queue,
-            prompt_prefix="Summarize the following batch of live social posts:\n",
+            prompt_prefix="Summarize the following batch of live social posts (JSON records):\n",
             separator="\n---\n",
         )
     )

@@ -44,14 +44,24 @@ impl PyPipelineWrapper<String, String> for PyFilter {
 #[pymethods]
 impl PyFilter {
     #[new]
-    fn new(pattern: &str) -> PyResult<Self> {
-        let filter = Filter::with_pattern(pattern)
-            .map_err(|e| PyRuntimeError::new_err(format!("Invalid regex pattern: {}", e)))?;
+    #[pyo3(signature = (pattern, *, json_path = None))]
+    fn new(pattern: &str, json_path: Option<&str>) -> PyResult<Self> {
+        let filter = match json_path {
+            Some(pointer) => Filter::with_json_pattern(pointer, pattern),
+            None => Filter::with_pattern(pattern),
+        }
+        .map_err(|e| PyRuntimeError::new_err(format!("Invalid regex pattern: {}", e)))?;
+
         Ok(Self {
             filter: filter.clone(),
             stage: PipelineTask::new(filter),
             rooted: None,
         })
+    }
+
+    #[staticmethod]
+    fn with_json_pattern(json_path: &str, pattern: &str) -> PyResult<Self> {
+        Self::new(pattern, Some(json_path))
     }
 
     #[staticmethod]

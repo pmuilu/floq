@@ -4,13 +4,14 @@ Single-node, data-parallel stream processing engine in Rust with zero-GIL Python
 
 ## Architecture & Execution Model
 
-- **Lazy DAG Materialization (`BitOr` Composition)**: The `|` operator (`std::ops::BitOr` in Rust, `__or__` in `pyfloq.Stream`) constructs a typed pipeline graph without spawning tasks or allocating queues. Bounded `tokio::sync::mpsc` channels (`Message<T>`) and per-slot worker futures are materialized only when `.run().await` is invoked, running inside a single `tokio::task::JoinSet` that aborts all sibling stages immediately on the first unhandled stage error.
+- **Lazy DAG Materialization (`BitOr` Composition)**: The `|` operator (`std::ops::BitOr` in Rust, `__or__` in `pyfloq`) constructs a typed pipeline graph without spawning tasks or allocating queues. Bounded `tokio::sync::mpsc` channels (`Message<T>`) and per-slot worker futures are materialized only when `.run().await` is invoked, running inside a single `tokio::task::JoinSet` that aborts all sibling stages immediately on the first unhandled stage error.
 - **Exclusive Per-Slot SPSC Receivers & Fan-Out Topologies**: Each parallel slot (`with_slots(n)`) owns an exclusive `mpsc::Receiver<Message<I>>` without shared `Arc<Mutex<Receiver>>` contention across workers. Upstream stages dispatch via:
   - **Round-Robin (`AtomicUsize` cursor)**: Lock-free distribution across downstream slot channels.
-  - **Deterministic Keyed Routing (`KeyBy`)**: Computes `DefaultHasher` over the extracted routing key (`hash % num_slots`) so stateful operators (`Window`, `Reduce`, keyed `AdkAgent` sessions) preserve per-key ordering and state locality across parallel slots.
+  - **Deterministic Keyed Routing (`KeyBy`)**: Computes `DefaultHasher` over an extracted routing key or RFC 6901 JSON Pointer (`KeyBy::with_json_field("/did")`, `hash % num_slots`) so stateful operators (`Window`, `Reduce`, keyed `AdkAgent` sessions) preserve per-key ordering and state locality across parallel slots.
   - **Broadcast**: Clones payloads across independent downstream branches.
-- **Polymorphic Stage Bridging (`AdkInput`)**: Operators like `AdkAgent<I>` implement `Operator` generically over `I: AdkInput` (`String` and `Vec<String>`), allowing direct composition after either unwindowed filters (`Filter -> AdkAgent<String>`) or windowed micro-batches (`Window -> AdkAgent<Vec<String>>`) without intermediate adapter stages.
-- **Zero-GIL Python Execution (`pyfloq`)**: In Python, `pyfloq` compiles a type-erased `StreamNode` chain (`StreamOutput::Strings` | `StreamOutput::Batches`) into a native Rust `PipelineTask<(), ()>` executed on a multi-threaded Tokio runtime via `pyo3_async_runtimes`. Ingestion, regex filtering, CBOR/CAR decoding, and windowing execute entirely on Rust worker threads without holding the Python GIL; the GIL is acquired only at the sink/agent boundary via `loop.call_soon_threadsafe` or `into_future_with_locals`.
+- **Structured JSON Wire Mode & JSON-Pointer Filtering**: Built-in sources (`BlueskyFirehoseSource`, `MastodonFirehoseSource`) support `OutputFormat::Json` (`.with_json_output()` / `json_output=True`), emitting canonical JSON records (`uri`, `cid`, `did`, `text`, `langs`, `reply_to`, `created_at`, `seq`) and tagging `Message::source_id`. `Filter::with_json_pattern("/text", pattern)` (`pyfloq.Filter(pattern, json_path="/text")`) evaluates regexes against a specific RFC 6901 JSON Pointer while forwarding the full structured JSON payload downstream to `Window` and ADK agents. For typed Rust stages, `JsonParse<T>` deserializes JSON strings into `T: DeserializeOwned` mid-pipeline.
+- **WAL-Mode SQLite Checkpointing (`SqliteCheckpointStore`)**: Persists source cursors (`BlueskyFirehoseSource` ATProto sequence numbers) and byte offsets (`FileSource`) in a local SQLite database (`PRAGMA journal_mode=WAL`) for exact resumption across restarts.
+- **Zero-GIL Python Execution (`pyfloq`)**: In Python, `pyfloq` compiles a pipeline into a native Rust `PipelineTask<(), ()>` executed on a multi-threaded Tokio runtime. Ingestion, CBOR/CAR decoding, JSON-pointer regex filtering, and windowing execute entirely on Rust worker threads without holding the Python GIL; the GIL is acquired only at the sink/agent boundary.
 
 ---
 
@@ -21,7 +22,7 @@ Single-node, data-parallel stream processing engine in Rust with zero-GIL Python
 1. **`pyfloq.AdkLiveSink` (Push to `LiveRequestQueue`)**: Terminal sink that formats incoming `String` or `Vec<String>` micro-batches in Rust and dispatches `google.genai.types.Content` into an ADK `LiveRequestQueue` on the Python `asyncio` event loop via `call_soon_threadsafe`.
 2. **`pyfloq.AdkAgent` (In-Pipeline Operator)**: Mid-pipeline transformer (`Source | Filter | Window | AdkAgent | Sink`) that invokes `Runner.run_async` per item/batch on the Python asyncio loop (`shared`, `ephemeral`, or `from_source_id` session routing) and feeds the agent's synthesized text response back into the Rust pipeline.
 
-### Example: Windowed Bluesky Firehose -> `AdkLiveSink` (`crates/pyfloq/examples/adk_live_example.py`)
+### Example: Structured Bluesky Firehose + SQLite Checkpointing -> `AdkLiveSink` (`crates/pyfloq/examples/adk_live_example.py`)
 
 ```python
 import asyncio
@@ -44,15 +45,19 @@ async def main():
     runner = Runner(agent=agent, app_name="floq_app", session_service=session_service)
     live_queue = LiveRequestQueue()
 
-    # Ingest ATProto CBOR/CAR frames, regex-filter, and batch in Rust (GIL-free),
-    # then push formatted types.Content batches into ADK's LiveRequestQueue.
+    # Ingest ATProto CBOR/CAR frames as structured JSON, persist the sequence cursor
+    # to SQLite, filter specifically on `/text` in Rust (GIL-free), and push batches
+    # into ADK's LiveRequestQueue.
     pipeline = (
-        pyfloq.BlueskyFirehoseSource()
-        | pyfloq.Filter(r"(?i)\b(rust|python|ai|llm|agent)\b")
+        pyfloq.BlueskyFirehoseSource(
+            json_output=True,
+            checkpoint_db="floq_checkpoints.sqlite",
+        )
+        | pyfloq.Filter(r"(?i)\b(rust|python|ai|llm|agent)\b", json_path="/text")
         | pyfloq.Window.with_count_or_duration(15, 8000)
         | pyfloq.AdkLiveSink(
             live_queue,
-            prompt_prefix="Summarize the following batch of live social posts:\n",
+            prompt_prefix="Summarize the following batch of live social posts (JSON records):\n",
             separator="\n---\n",
         )
     )
@@ -81,19 +86,24 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Example: In-Pipeline `pyfloq.AdkAgent` Operator
+### Example: Tailing Local JSONL Logs (`FileSource.tail`) -> `AdkAgent`
+
+`pyfloq.FileSource.tail` implements `tail -F` semantics with inode/truncation rotation detection and SQLite byte-offset checkpointing:
 
 ```python
 collector = pyfloq.Collector()
 
 pipeline = (
-    pyfloq.BlueskyFirehoseSource()
-    | pyfloq.Filter(r"(?i)\b(rust|tokio|pyo3)\b")
+    pyfloq.FileSource.tail(
+        "/var/log/service.jsonl",
+        checkpoint_db="floq_checkpoints.sqlite",
+    )
+    | pyfloq.Filter(r"(?i)\b(error|panic|timeout)\b", json_path="/message")
     | pyfloq.Window.with_count_or_duration(20, 5000)
     | pyfloq.AdkAgent(
         runner,
         session_mode="ephemeral",  # or "shared" / "from_source_id"
-        prompt_prefix="Extract key technical topics:\n",
+        prompt_prefix="Diagnose the root cause from these error log records:\n",
     )
     | collector
 )
@@ -103,10 +113,11 @@ pipeline = (
 
 ## Rust Pipeline API
 
-### Declarative Pipeline & Parallel Slots
+### Structured JSON, SQLite Checkpoints & Parallel Slots
 
 ```rust
 use floq::{
+    checkpoint::SqliteCheckpointStore,
     functions::{Filter, Map, Window},
     pipeline::{IntoTask, PipelineTask},
     sources::BlueskyFirehoseSource,
@@ -117,8 +128,15 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let source = BlueskyFirehoseSource::new().into_task();
-    let filter = Filter::with_pattern(r"(?i)\b(rust|tokio|ai)\b")?.into_task();
+    let store = SqliteCheckpointStore::open("floq_checkpoints.sqlite")?;
+
+    let source = BlueskyFirehoseSource::new()
+        .with_json_output()
+        .with_default_checkpoint(store)
+        .into_task();
+
+    // Match regex against `/text` while forwarding the full JSON record
+    let filter = Filter::with_json_pattern("/text", r"(?i)\b(rust|tokio|ai)\b")?.into_task();
 
     // Hybrid count-or-duration window partitioned across 4 parallel worker slots
     let window = Window::with_count_or_duration(50, Duration::from_secs(3)).with_slots(4);
@@ -135,78 +153,49 @@ async fn main() -> Result<()> {
 }
 ```
 
-### Rust `AdkAgent` Operator (HTTP Sidecar / ADK API Server)
-
-In pure Rust pipelines, `AdkAgent<I>` communicates with an `adk api_server` endpoint over HTTP (`/apps/{app}/users/{user}/sessions/{session}` and `/run`) with automatic `404` session initialization and configurable session scoping (`AdkSessionMode::Shared`, `Keyed`, `FromSourceId`, or `Ephemeral`):
+### File Tailing with Rotation Detection & Checkpointing (`FileSource::tail`)
 
 ```rust
 use floq::{
-    functions::{Filter, Window},
+    checkpoint::SqliteCheckpointStore,
+    functions::Filter,
     pipeline::IntoTask,
-    sources::BlueskyFirehoseSource,
-    transformers::{AdkAgent, PrinterSink},
+    sources::FileSource,
+    transformers::PrinterSink,
 };
-use std::time::Duration;
 
-let pipeline = BlueskyFirehoseSource::new().into_task()
-    | Filter::with_pattern(r"(?i)\b(rust|ai|agent)\b")?.into_task()
-    | Window::with_count_or_duration(25, Duration::from_secs(5)).into_task()
-    | AdkAgent::new("http://localhost:8000", "trend_analyzer")
-        .with_prompt_prefix("Summarize key technical signals in this batch:\n")
-        .with_separator("\n---\n")
-        .with_shared_session("live_firehose_session")
-        .into_task()
-    | PrinterSink::new("[ADK] ").into_task();
+let store = SqliteCheckpointStore::open("checkpoints.sqlite")?;
 
-pipeline.run().await?;
+let pipeline = FileSource::tail("/var/log/app.jsonl")
+    .with_default_checkpoint(store)
+    .into_task()
+    | Filter::with_json_pattern("/level", "^ERROR$")?.into_task()
+    | PrinterSink::new("[alert] ").into_task();
 ```
 
-### Custom Components (`Source`, `Operator`, `Sink`)
-
-Implement the role trait and bridge it to `PipelineComponent` with `impl_source_component!`, `impl_operator_component!`, or `impl_sink_component!`:
+### Keyed JSON Partitioning (`KeyBy::with_json_field`) & Typed Parsing (`JsonParse<T>`)
 
 ```rust
 use floq::{
-    impl_sink_component,
-    pipeline::{IntoTask, Receiver, Sink},
-    Result,
-};
-
-struct CustomSink;
-
-impl Sink for CustomSink {
-    type Input = String;
-
-    async fn run(&self, mut input: Receiver<Self::Input>) -> Result<()> {
-        while let Some(msg) = input.recv().await {
-            println!("Event ({} ms): {}", msg.event_timestamp, msg.payload);
-        }
-        Ok(())
-    }
-}
-
-impl_sink_component!(CustomSink, String);
-```
-
-### Keyed Partitioning (`KeyBy`) & Host Channel Bridge (`ChannelSink`)
-
-```rust
-use floq::{
-    functions::Window,
+    functions::{JsonParse, Window},
     pipeline::IntoTask,
     slots::KeyBy,
-    transformers::ChannelSink,
 };
+use serde::Deserialize;
 
-// Deterministic hash routing across 4 stateful window slots
-let keyed_window = KeyBy::new(|event: &String| {
-    event.split(':').next().unwrap_or_default().to_owned()
-})
-.into_task()
+#[derive(Clone, Debug, Deserialize)]
+struct BlueskyPost {
+    uri: String,
+    did: String,
+    text: String,
+}
+
+// Route JSON strings deterministically by `/did` across 4 parallel window slots
+let keyed_window = KeyBy::with_json_field("/did").into_task()
     | Window::with_count(10).with_slots(4);
 
-// Bridge pipeline output into an external Tokio mpsc::Receiver
-let (sink, mut rx) = ChannelSink::new(256);
+// Or deserialize JSON strings into typed Rust structs mid-pipeline
+let typed_stage = JsonParse::<BlueskyPost>::new().into_task();
 ```
 
 ---
@@ -215,17 +204,18 @@ let (sink, mut rx) = ChannelSink::new(256);
 
 ```toml
 [dependencies]
-floq = { version = "0.1", default-features = false, features = ["bluesky", "adk"] }
+floq = { version = "0.1", default-features = false, features = ["bluesky", "adk", "sqlite"] }
 ```
 
 | Feature | Crate / Protocol Dependencies |
 | :--- | :--- |
-| `full` *(default)* | All sources, operators, and sinks |
+| `full` *(default)* | All sources, operators, sinks, and SQLite checkpointing |
+| `sqlite` | `SqliteCheckpointStore` (links system `libsqlite3` in WAL mode) |
 | `websocket` | `WebSocketSource` (`tokio-tungstenite`) |
 | `bluesky` | `BlueskyFirehoseSource` (`websocket`, `ciborium` DAG-CBOR, `rs-car` ATProto CAR blocks) |
 | `mastodon` | `MastodonFirehoseSource` (`websocket`, `chrono`) |
 | `mqtt` | `WebSocketMqttSource` (`rumqttc`) |
 | `gemini` | `GeminiEmbeddings` (`reqwest`) |
-| `adk` | `AdkAgent` (`reqwest`, `uuid`) |
+| `adk` | `AdkAgent` (`reqwest`) |
 | `huggingface` | `HuggingfaceEmbeddings` (`reqwest`) |
 | `webhook` | `WebhookSink` (`reqwest`) |

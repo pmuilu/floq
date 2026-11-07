@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 mod py_adk;
 mod py_bluesky_firehose;
 mod py_collector;
+mod py_file_source;
 mod py_filter;
 mod py_map;
 mod py_pipeline_component;
@@ -16,6 +17,7 @@ mod py_window;
 use py_adk::{PyAdkAgent, PyAdkLiveSink};
 use py_bluesky_firehose::PyBlueskyFirehoseSource;
 use py_collector::PyCollector;
+use py_file_source::PyFileSource;
 use py_filter::PyFilter;
 use py_map::PyMap;
 use py_pipeline_component::PyPipelineComponent;
@@ -32,6 +34,7 @@ fn pyfloq(_py: Python, m: &PyModule) -> PyResult<()> {
 
     m.add_class::<PyPipelineComponent>()?;
     m.add_class::<PyBlueskyFirehoseSource>()?;
+    m.add_class::<PyFileSource>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyReduce>()?;
     m.add_class::<PyCollector>()?;

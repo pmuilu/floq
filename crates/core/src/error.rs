@@ -65,6 +65,9 @@ pub enum Error {
     #[error("external API error: {0}")]
     Api(String),
 
+    #[error("SQLite checkpoint error: {0}")]
+    Checkpoint(String),
+
     #[error("{0}")]
     Custom(String),
 }

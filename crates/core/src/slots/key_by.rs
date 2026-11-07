@@ -6,19 +6,21 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tracing::debug;
 
+pub type BoxedJsonKeyFn = Box<dyn Fn(&String) -> String + Send + Sync>;
+
 /// Routes messages to downstream slots deterministically by hashing a key extracted from each payload.
 ///
 /// All messages producing the same key `K` are guaranteed to be sent to the same downstream slot index,
 /// enabling stateful per-key windowing and reduction across parallel workers.
-pub struct KeyBy<T, K, F> {
-    key_selector: F,
+pub struct KeyBy<T, K, F = BoxedJsonKeyFn> {
+    key_selector: Arc<F>,
     _phantom: PhantomData<fn(&T) -> K>,
 }
 
-impl<T, K, F: Clone> Clone for KeyBy<T, K, F> {
+impl<T, K, F> Clone for KeyBy<T, K, F> {
     fn clone(&self) -> Self {
         Self {
-            key_selector: self.key_selector.clone(),
+            key_selector: Arc::clone(&self.key_selector),
             _phantom: PhantomData,
         }
     }
@@ -32,7 +34,7 @@ where
 {
     pub fn new(key_selector: F) -> Self {
         Self {
-            key_selector,
+            key_selector: Arc::new(key_selector),
             _phantom: PhantomData,
         }
     }
@@ -43,6 +45,31 @@ where
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         (hasher.finish() as usize) % slot_count.max(1)
+    }
+}
+
+impl KeyBy<String, String, BoxedJsonKeyFn> {
+    /// Routes JSON string messages deterministically by extracting the field at `json_pointer`
+    /// (e.g. `"/did"` or `"did"`, `"/user/id"`).
+    pub fn with_json_field(json_pointer: impl Into<String>) -> Self {
+        let raw_ptr = json_pointer.into();
+        let pointer: Arc<str> = if raw_ptr.is_empty() || raw_ptr.starts_with('/') {
+            Arc::from(raw_ptr)
+        } else {
+            Arc::from(format!("/{raw_ptr}"))
+        };
+
+        Self::new(Box::new(move |raw_json: &String| {
+            serde_json::from_str::<serde_json::Value>(raw_json)
+                .ok()
+                .and_then(|val| {
+                    val.pointer(&pointer).map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                })
+                .unwrap_or_default()
+        }))
     }
 }
 

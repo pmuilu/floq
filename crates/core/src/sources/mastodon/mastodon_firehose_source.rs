@@ -2,8 +2,10 @@ use crate::error::{Error, Result};
 use crate::impl_source_component;
 use crate::pipeline::{Message as FloqMessage, Sender, Source};
 use crate::sources::reconnect::ReconnectPolicy;
+use crate::sources::OutputFormat;
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
@@ -15,19 +17,52 @@ struct MastodonEvent {
     payload: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct MastodonAccount {
+    #[serde(default)]
+    acct: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MastodonStatus {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    uri: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
     content: String,
     created_at: String,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    account: MastodonAccount,
+}
+
+#[derive(Serialize)]
+struct MastodonStatusJson<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uri: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acct: Option<&'a str>,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<&'a str>,
+    created_at: &'a str,
 }
 
 /// Streams public status updates from a Mastodon server's WebSocket streaming API
-/// with configurable automatic reconnection.
+/// with configurable automatic reconnection and optional structured JSON output.
 #[derive(Clone, Debug)]
 pub struct MastodonFirehoseSource {
     server_url: String,
     access_token: Option<String>,
     reconnect: ReconnectPolicy,
+    output_format: OutputFormat,
 }
 
 impl Default for MastodonFirehoseSource {
@@ -42,6 +77,7 @@ impl MastodonFirehoseSource {
             server_url: server_url.into(),
             access_token: None,
             reconnect: ReconnectPolicy::default(),
+            output_format: OutputFormat::Text,
         }
     }
 
@@ -50,6 +86,7 @@ impl MastodonFirehoseSource {
             server_url: server_url.into(),
             access_token: Some(access_token.into()),
             reconnect: ReconnectPolicy::default(),
+            output_format: OutputFormat::Text,
         }
     }
 
@@ -60,6 +97,18 @@ impl MastodonFirehoseSource {
 
     pub fn without_reconnect(mut self) -> Self {
         self.reconnect = ReconnectPolicy::disabled();
+        self
+    }
+
+    /// Sets the output format (`OutputFormat::Text` or `OutputFormat::Json`).
+    pub fn with_output_format(mut self, format: OutputFormat) -> Self {
+        self.output_format = format;
+        self
+    }
+
+    /// Configures the source to emit structured JSON strings (`id`, `uri`, `url`, `acct`, `text`, `language`, `created_at`).
+    pub fn with_json_output(mut self) -> Self {
+        self.output_format = OutputFormat::Json;
         self
     }
 
@@ -122,14 +171,33 @@ impl Source for MastodonFirehoseSource {
                                             {
                                                 let unix_ms =
                                                     timestamp.timestamp_millis().max(0) as u64;
-                                                if output
-                                                    .send(FloqMessage::with_event_time(
-                                                        status.content,
-                                                        unix_ms,
-                                                    ))
-                                                    .await
-                                                    .is_err()
-                                                {
+                                                let acct = status.account.acct.as_deref();
+                                                let payload = match self.output_format {
+                                                    OutputFormat::Text => status.content,
+                                                    OutputFormat::Json => {
+                                                        let rec = MastodonStatusJson {
+                                                            id: status.id.as_deref(),
+                                                            uri: status.uri.as_deref(),
+                                                            url: status.url.as_deref(),
+                                                            acct,
+                                                            text: &status.content,
+                                                            language: status.language.as_deref(),
+                                                            created_at: &status.created_at,
+                                                        };
+                                                        serde_json::to_string(&rec)
+                                                            .unwrap_or(status.content)
+                                                    }
+                                                };
+
+                                                let mut msg =
+                                                    FloqMessage::with_event_time(payload, unix_ms);
+                                                if let Some(a) = acct {
+                                                    if !a.is_empty() {
+                                                        msg = msg.with_source(Arc::from(a));
+                                                    }
+                                                }
+
+                                                if output.send(msg).await.is_err() {
                                                     return Ok(());
                                                 }
                                             } else {

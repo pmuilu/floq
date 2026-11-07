@@ -1,3 +1,5 @@
+#[cfg(feature = "sqlite")]
+pub mod checkpoint;
 pub mod error;
 pub mod functions;
 pub mod pipeline;
